@@ -28,7 +28,10 @@ extern unsigned int nvme_io_timeout;
 extern unsigned int admin_timeout;
 #define NVME_ADMIN_TIMEOUT	(admin_timeout * HZ)
 
-#define NVME_DEFAULT_KATO	5
+#define NVME_DEFAULT_KATO		5
+
+#define NVME_DEFAULT_ADP_EWMA_SHIFT	3
+#define NVME_DEFAULT_ADP_WEIGHT_TIMEOUT	(15 * NSEC_PER_SEC)
 
 #ifdef CONFIG_ARCH_NO_SG_CHAIN
 #define  NVME_INLINE_SG_CNT  0
@@ -421,6 +424,7 @@ enum nvme_iopolicy {
 	NVME_IOPOLICY_NUMA,
 	NVME_IOPOLICY_RR,
 	NVME_IOPOLICY_QD,
+	NVME_IOPOLICY_ADAPTIVE,
 };
 
 struct nvme_subsystem {
@@ -457,6 +461,37 @@ struct nvme_ns_ids {
 	u8	nguid[16];
 	uuid_t	uuid;
 	u8	csi;
+};
+
+enum nvme_stat_group {
+	NVME_STAT_READ,
+	NVME_STAT_WRITE,
+	NVME_STAT_OTHER,
+	NVME_NUM_STAT_GROUPS
+};
+
+struct nvme_path_stat {
+	u64 nr_samples;		/* total num of samples processed */
+	u64 nr_ignored;		/* num. of samples ignored */
+	u64 slat_ns;		/* smoothed (ewma) latency in nanoseconds */
+	u64 score;		/* score used for weight calculation */
+	u64 last_weight_ts;	/* timestamp of the last weight calculation */
+	u64 sel;		/* num of times this path is selcted for I/O */
+	u64 batch;		/* accumulated latency sum for current window */
+	u32 batch_count;	/* num of samples accumulated in current window */
+	u32 weight;		/* path weight */
+	u32 credit;		/* path credit for I/O forwarding */
+};
+
+struct nvme_path_work {
+	struct nvme_ns *ns;		/* owning namespace */
+	struct work_struct weight_work;	/* deferred work for weight calculation */
+	int op_type;			/* op type : READ/WRITE/OTHER */
+};
+
+struct nvme_path_info {
+	struct nvme_path_stat stat;	/* path statistics */
+	struct nvme_path_work work;	/* background worker context */
 };
 
 /*
@@ -508,6 +543,9 @@ struct nvme_ns_head {
 	unsigned long		flags;
 	struct delayed_work	remove_work;
 	unsigned int		delayed_removal_secs;
+
+	struct nvme_ns * __percpu	*adp_path;
+
 #define NVME_NSHEAD_DISK_LIVE		0
 #define NVME_NSHEAD_QUEUE_IF_NO_PATH	1
 	struct nvme_ns __rcu	*current_path[];
@@ -534,6 +572,7 @@ struct nvme_ns {
 #ifdef CONFIG_NVME_MULTIPATH
 	enum nvme_ana_state ana_state;
 	u32 ana_grpid;
+	struct nvme_path_info __percpu *info;
 #endif
 	struct list_head siblings;
 	struct kref kref;
@@ -545,6 +584,7 @@ struct nvme_ns {
 #define NVME_NS_FORCE_RO		3
 #define NVME_NS_READY			4
 #define NVME_NS_SYSFS_ATTR_LINK	5
+#define NVME_NS_PATH_STAT		6
 
 	struct cdev		cdev;
 	struct device		cdev_device;
@@ -956,7 +996,17 @@ extern const struct attribute_group *nvme_dev_attr_groups[];
 extern const struct block_device_operations nvme_bdev_ops;
 
 void nvme_delete_ctrl_sync(struct nvme_ctrl *ctrl);
-struct nvme_ns *nvme_find_path(struct nvme_ns_head *head);
+struct nvme_ns *nvme_find_path(struct nvme_ns_head *head, unsigned int op_type);
+static inline int nvme_data_dir(const enum req_op op)
+{
+	if (op == REQ_OP_READ)
+		return NVME_STAT_READ;
+	else if (op_is_write(op))
+		return NVME_STAT_WRITE;
+	else
+		return NVME_STAT_OTHER;
+}
+
 #ifdef CONFIG_NVME_MULTIPATH
 static inline bool nvme_ctrl_use_ana(struct nvme_ctrl *ctrl)
 {
@@ -979,12 +1029,14 @@ void nvme_mpath_init_ctrl(struct nvme_ctrl *ctrl);
 void nvme_mpath_update(struct nvme_ctrl *ctrl);
 void nvme_mpath_uninit(struct nvme_ctrl *ctrl);
 void nvme_mpath_stop(struct nvme_ctrl *ctrl);
+void nvme_mpath_cancel_adaptive_path_weight_work(struct nvme_ns *ns);
 bool nvme_mpath_clear_current_path(struct nvme_ns *ns);
 void nvme_mpath_revalidate_paths(struct nvme_ns *ns);
 void nvme_mpath_clear_ctrl_paths(struct nvme_ctrl *ctrl);
 void nvme_mpath_remove_disk(struct nvme_ns_head *head);
 void nvme_mpath_start_request(struct request *rq);
 void nvme_mpath_end_request(struct request *rq);
+int nvme_alloc_ns_stat(struct nvme_ns *ns);
 
 static inline void nvme_trace_bio_complete(struct request *req)
 {
@@ -1011,6 +1063,13 @@ static inline bool nvme_mpath_queue_if_no_path(struct nvme_ns_head *head)
 	if (test_bit(NVME_NSHEAD_QUEUE_IF_NO_PATH, &head->flags))
 		return true;
 	return false;
+}
+static inline void nvme_free_ns_stat(struct nvme_ns *ns)
+{
+	if (!ns->head->disk)
+		return;
+
+	free_percpu(ns->info);
 }
 #else
 #define multipath false
@@ -1102,6 +1161,17 @@ static inline bool nvme_disk_is_ns_head(struct gendisk *disk)
 static inline bool nvme_mpath_queue_if_no_path(struct nvme_ns_head *head)
 {
 	return false;
+}
+static inline void nvme_mpath_cancel_adaptive_path_weight_work(
+		struct nvme_ns *ns)
+{
+}
+static inline int nvme_alloc_ns_stat(struct nvme_ns *ns)
+{
+	return 0;
+}
+static inline void nvme_free_ns_stat(struct nvme_ns *ns)
+{
 }
 #endif /* CONFIG_NVME_MULTIPATH */
 
