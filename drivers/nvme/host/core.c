@@ -3915,6 +3915,7 @@ static struct nvme_ns_head *nvme_alloc_ns_head(struct nvme_ctrl *ctrl,
 	head->rotational = info->is_rotational;
 #ifdef CONFIG_NVME_MULTIPATH
 	head->adp_ewma_shift = NVME_DEFAULT_ADP_EWMA_SHIFT;
+	head->adp_weight_timeout = NVME_DEFAULT_ADP_WEIGHT_TIMEOUT;
 #endif
 	ratelimit_state_init(&head->rs_nuse, 5 * HZ, 1);
 	ratelimit_set_flags(&head->rs_nuse, RATELIMIT_MSG_ON_RELEASE);

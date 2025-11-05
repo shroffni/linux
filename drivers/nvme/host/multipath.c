@@ -362,8 +362,11 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	stat->batch_count++;
 	stat->nr_samples++;
 
-	if (now > stat->last_weight_ts &&
-	    (now - stat->last_weight_ts) >= NVME_DEFAULT_ADP_WEIGHT_TIMEOUT) {
+	if (now > stat->last_weight_ts) {
+		u64 timeout = READ_ONCE(head->adp_weight_timeout);
+
+		if ((now - stat->last_weight_ts) < timeout)
+			return;
 
 		stat->last_weight_ts = now;
 
