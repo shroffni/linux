@@ -545,6 +545,7 @@ struct nvme_ns_head {
 	unsigned int		delayed_removal_secs;
 
 	struct nvme_ns * __percpu	*adp_path;
+	u32				adp_ewma_shift;
 
 #define NVME_NSHEAD_DISK_LIVE		0
 #define NVME_NSHEAD_QUEUE_IF_NO_PATH	1
