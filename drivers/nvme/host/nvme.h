@@ -546,6 +546,7 @@ struct nvme_ns_head {
 
 	struct nvme_ns * __percpu	*adp_path;
 	u32				adp_ewma_shift;
+	u64				adp_weight_timeout;
 
 #define NVME_NSHEAD_DISK_LIVE		0
 #define NVME_NSHEAD_QUEUE_IF_NO_PATH	1
