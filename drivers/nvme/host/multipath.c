@@ -294,10 +294,9 @@ out:
  * For instance, with EWMA_SHIFT = 3, this assigns 7/8 (~87.5 %) weight to
  * the existing/old ewma and 1/8 (~12.5%) weight to the new sample.
  */
-static inline u64 ewma_update(u64 old, u64 new)
+static inline u64 ewma_update(u64 old, u64 new, u32 ewma_shift)
 {
-	return (old * ((1 << NVME_DEFAULT_ADP_EWMA_SHIFT) - 1)
-			+ new) >> NVME_DEFAULT_ADP_EWMA_SHIFT;
+	return (old * ((1 << ewma_shift) - 1) + new) >> ewma_shift;
 }
 
 static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
@@ -389,7 +388,8 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 		if (unlikely(!stat->slat_ns))
 			WRITE_ONCE(stat->slat_ns, avg_lat_ns);
 		else {
-			slat_ns = ewma_update(stat->slat_ns, avg_lat_ns);
+			slat_ns = ewma_update(stat->slat_ns, avg_lat_ns,
+					READ_ONCE(head->adp_ewma_shift));
 			WRITE_ONCE(stat->slat_ns, slat_ns);
 		}
 
