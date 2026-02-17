@@ -204,29 +204,38 @@ void nvme_mpath_start_request(struct request *rq)
 }
 EXPORT_SYMBOL_GPL(nvme_mpath_start_request);
 
+/*
+ * Formula to calculate the EWMA (Exponentially Weighted Moving Average):
+ * ewma = (old_ewma * (EWMA_SHIFT - 1) + (EWMA_SHIFT)) / EWMA_SHIFT
+ * For instance, with EWMA_SHIFT = 3, this assigns 7/8 (~87.5 %) weight to
+ * the existing/old ewma and 1/8 (~12.5%) weight to the new sample.
+ */
+static inline u64 ewma_update(u64 old, u64 new, u32 ewma_shift)
+{
+	return (old * ((1 << ewma_shift) - 1) + new) >> ewma_shift;
+}
+
 static void nvme_mpath_weight_work(struct work_struct *weight_work)
 {
-	int cpu, srcu_idx;
+	int srcu_idx;
 	u32 weight;
 	struct nvme_ns *ns;
-	struct nvme_path_stat *stat;
-	struct nvme_path_work *work = container_of(weight_work,
-			struct nvme_path_work, weight_work);
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_stat *stat;
+	struct nvme_path_aggr_work *work = container_of(weight_work,
+			struct nvme_path_aggr_work, weight_work);
 	struct nvme_ns_head *head = work->ns->head;
+	enum nvme_io_bucket bucket = work->bucket;
 	int op_type = work->op_type;
+	int node = numa_node_id();
 	u64 total_score = 0;
-
-	cpu = get_cpu();
 
 	srcu_idx = srcu_read_lock(&head->srcu);
 	list_for_each_entry_srcu(ns, &head->list, siblings,
 			srcu_read_lock_held(&head->srcu)) {
 
-		stat = &this_cpu_ptr(ns->info)[op_type].stat;
-		if (!READ_ONCE(stat->slat_ns)) {
-			stat->score = 0;
-			continue;
-		}
+		aggr = ns->aggr[node];
+		stat = &aggr[op_type].buckets[bucket].stat;
 		/*
 		 * Compute the path score as the inverse of smoothed
 		 * latency, scaled by NSEC_PER_SEC. Floating point
@@ -235,7 +244,7 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 		 * because valid latencies are always < 1 second; longer
 		 * latencies are ignored.
 		 */
-		stat->score = div_u64(NSEC_PER_SEC, READ_ONCE(stat->slat_ns));
+		stat->score = div_u64(NSEC_PER_SEC, stat->slat_ns);
 
 		/* Compute total score. */
 		total_score += stat->score;
@@ -267,9 +276,10 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 	list_for_each_entry_srcu(ns, &head->list, siblings,
 			srcu_read_lock_held(&head->srcu)) {
 
-		stat = &this_cpu_ptr(ns->info)[op_type].stat;
-		weight = div_u64(stat->score * 64, total_score);
+		aggr = ns->aggr[node];
+		stat = &aggr[op_type].buckets[bucket].stat;
 
+		weight = div_u64(stat->score * 64, total_score);
 		/*
 		 * Ensure the path weight never drops below 1. A weight
 		 * of 0 is used only for newly added paths. During
@@ -285,28 +295,43 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 	}
 out:
 	srcu_read_unlock(&head->srcu, srcu_idx);
-	put_cpu();
 }
 
-/*
- * Formula to calculate the EWMA (Exponentially Weighted Moving Average):
- * ewma = (old_ewma * (EWMA_SHIFT - 1) + (EWMA_SHIFT)) / EWMA_SHIFT
- * For instance, with EWMA_SHIFT = 3, this assigns 7/8 (~87.5 %) weight to
- * the existing/old ewma and 1/8 (~12.5%) weight to the new sample.
- */
-static inline u64 ewma_update(u64 old, u64 new, u32 ewma_shift)
+static inline enum nvme_io_bucket nvme_mpath_get_io_bucket(unsigned int sectors)
 {
-	return (old * ((1 << ewma_shift) - 1) + new) >> ewma_shift;
+#define SZ_16K_SECTORS (16*1024 >> SECTOR_SHIFT)
+#define SZ_32K_SECTORS (32*1024 >> SECTOR_SHIFT)
+#define SZ_64K_SECTORS (64*1024 >> SECTOR_SHIFT)
+#define SZ_128K_SECTORS        (128*1024 >> SECTOR_SHIFT)
+#define SZ_256K_SECTORS        (256*1024 >> SECTOR_SHIFT)
+#define SZ_512K_SECTORS        (512*1024 >> SECTOR_SHIFT)
+
+       if (sectors <= SZ_16K_SECTORS)
+               return NVME_IO_BUCKET_SMALL;
+       else if (sectors <= SZ_32K_SECTORS)
+               return NVME_IO_BUCKET_32K;
+       else if (sectors <= SZ_64K_SECTORS)
+               return NVME_IO_BUCKET_64K;
+       else if (sectors <= SZ_128K_SECTORS)
+               return NVME_IO_BUCKET_128K;
+       else if (sectors <= SZ_256K_SECTORS)
+               return NVME_IO_BUCKET_256K;
+       else if (sectors <= SZ_512K_SECTORS)
+               return NVME_IO_BUCKET_512K;
+       else
+               return NVME_IO_BUCKET_LARGE;
 }
 
 static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 {
 	int cpu;
 	unsigned int op_type;
-	struct nvme_path_info *info;
-	struct nvme_path_stat *stat;
-	u64 now, latency, slat_ns, avg_lat_ns;
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_stat *stat;
+	u64 now, latency, last_weight_ts;
+	enum nvme_io_bucket bucket;
 	struct nvme_ns_head *head = ns->head;
+	int node = numa_node_id();
 
 	if (list_is_singular(&head->list))
 		return;
@@ -332,8 +357,9 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	 */
 	cpu = blk_mq_rq_cpu(rq);
 	op_type = nvme_data_dir(req_op(rq));
-	info = &per_cpu_ptr(ns->info, cpu)[op_type];
-	stat = &info->stat;
+	aggr = ns->aggr[node];
+	bucket = nvme_mpath_get_io_bucket(blk_rq_sectors(rq));
+	stat = &aggr[op_type].buckets[bucket].stat;
 
 	/*
 	 * If latency > ~1s then ignore this sample to prevent EWMA from being
@@ -345,7 +371,7 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	 * so we safely skip such sample here.
 	 */
 	if (unlikely(latency > NSEC_PER_SEC)) {
-		stat->nr_ignored++;
+		atomic64_inc(&stat->nr_ignored);
 		dev_warn_ratelimited(ns->ctrl->device,
 			"ignoring sample with >1s latency (possible controller stall or timeout)\n");
 		return;
@@ -358,23 +384,30 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	 * latency. The path weight is recalculated based on this smoothed
 	 * latency.
 	 */
-	stat->batch += latency;
-	stat->batch_count++;
-	stat->nr_samples++;
+	atomic64_add(latency, &stat->batch);
+	atomic64_inc(&stat->batch_count);
+	atomic64_inc(&stat->nr_samples);
 
-	if (now > stat->last_weight_ts) {
+	last_weight_ts = READ_ONCE(stat->last_weight_ts);
+	if (now > last_weight_ts) {
+		u64 count;
+		u64 latency, avg_latency_ns;
+		struct nvme_path_aggr_work *work;
 		u64 timeout = READ_ONCE(head->adp_weight_timeout);
 
-		if ((now - stat->last_weight_ts) < timeout)
+		if ((now - last_weight_ts) < timeout)
 			return;
 
-		stat->last_weight_ts = now;
+		WRITE_ONCE(stat->last_weight_ts, now);
 
-		/*
-		 * Find simple average latency for the last epoch (~15 sec
-		 * interval).
-		 */
-		avg_lat_ns = div_u64(stat->batch, stat->batch_count);
+		latency = atomic64_xchg(&stat->batch, 0);
+		if (!latency)
+			return;
+		count = atomic64_xchg(&stat->batch_count, 0);
+		if (!count)
+			return;
+
+		avg_latency_ns = div64_u64(latency, count);
 
 		/*
 		 * Calculate smooth/EWMA (Exponentially Weighted Moving Average)
@@ -389,19 +422,16 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 		 * existing latency and 1/8 (~12.5%) weight to the new latency.
 		 */
 		if (unlikely(!stat->slat_ns))
-			WRITE_ONCE(stat->slat_ns, avg_lat_ns);
-		else {
-			slat_ns = ewma_update(stat->slat_ns, avg_lat_ns,
+			stat->slat_ns = avg_latency_ns;
+		else
+			stat->slat_ns = ewma_update(stat->slat_ns,
+					avg_latency_ns,
 					READ_ONCE(head->adp_ewma_shift));
-			WRITE_ONCE(stat->slat_ns, slat_ns);
-		}
-
-		stat->batch = stat->batch_count = 0;
-
 		/*
 		 * Defer calculation of the path weight in per-cpu workqueue.
 		 */
-		schedule_work_on(cpu, &info->work.weight_work);
+		work = &aggr[op_type].buckets[bucket].work;
+		schedule_work_on(cpu, &work->weight_work);
 	}
 }
 
@@ -450,29 +480,46 @@ static const char *nvme_ana_state_names[] = {
 
 static void nvme_mpath_reset_adaptive_path_stat(struct nvme_ns *ns)
 {
-	int i, cpu;
+	int i, j, cpu, node;
 	struct nvme_path_stat *stat;
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_stat *aggr_stat;
 
 	for_each_possible_cpu(cpu) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			stat = &per_cpu_ptr(ns->info, cpu)[i].stat;
+			stat = &per_cpu_ptr(ns->stat, cpu)[i];
 			memset(stat, 0, sizeof(struct nvme_path_stat));
+		}
+	}
+
+	for_each_node(node) {
+		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
+			aggr = ns->aggr[node];
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				aggr_stat = &aggr[i].buckets[j].stat;
+				memset(aggr_stat, 0,
+					sizeof(struct nvme_path_aggr_stat));
+			}
 		}
 	}
 }
 
 void nvme_mpath_cancel_adaptive_path_weight_work(struct nvme_ns *ns)
 {
-	int i, cpu;
-	struct nvme_path_info *info;
+	int i, j, node;
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_work *work;
 
 	if (!test_bit(NVME_NS_PATH_STAT, &ns->flags))
 		return;
 
-	for_each_online_cpu(cpu) {
+	for_each_node(node) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			info = &per_cpu_ptr(ns->info, cpu)[i];
-			cancel_work_sync(&info->work.weight_work);
+			aggr = ns->aggr[node];
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				work = &aggr->buckets[j].work;
+				cancel_work_sync(&work->weight_work);
+			}
 		}
 	}
 }
@@ -487,7 +534,7 @@ static bool nvme_mpath_enable_adaptive_path_policy(struct nvme_ns *ns)
 	if (test_and_set_bit(NVME_NS_PATH_STAT, &ns->flags))
 		return false;
 
-	blk_queue_flag_set(QUEUE_FLAG_SAME_FORCE, ns->queue);
+	// blk_queue_flag_set(QUEUE_FLAG_SAME_FORCE, ns->queue);
 	blk_stat_enable_accounting(ns->queue);
 	return true;
 }
@@ -499,7 +546,7 @@ static bool nvme_mpath_disable_adaptive_path_policy(struct nvme_ns *ns)
 		return false;
 
 	blk_stat_disable_accounting(ns->queue);
-	blk_queue_flag_clear(QUEUE_FLAG_SAME_FORCE, ns->queue);
+	// blk_queue_flag_clear(QUEUE_FLAG_SAME_FORCE, ns->queue);
 	nvme_mpath_reset_adaptive_path_stat(ns);
 	return true;
 }
@@ -541,29 +588,50 @@ void nvme_mpath_clear_ctrl_paths(struct nvme_ctrl *ctrl)
 
 int nvme_alloc_ns_stat(struct nvme_ns *ns)
 {
-	int i, cpu;
-	struct nvme_path_work *work;
+	int i, j, node;
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_work *work;
+	size_t size;
 	gfp_t gfp = GFP_KERNEL | __GFP_ZERO;
 
 	if (!ns->head->disk)
 		return 0;
 
-	ns->info = __alloc_percpu_gfp(NVME_NUM_STAT_GROUPS *
-			sizeof(struct nvme_path_info),
-			__alignof__(struct nvme_path_info), gfp);
-	if (!ns->info)
+	size = NVME_NUM_STAT_GROUPS * sizeof(struct nvme_path_stat);
+
+	ns->stat = __alloc_percpu_gfp(size,
+			__alignof__(struct nvme_path_stat), gfp);
+	if (!ns->stat)
 		return -ENOMEM;
 
-	for_each_possible_cpu(cpu) {
+	size = sizeof(struct nvme_path_aggr);
+	for_each_node(node) {
+		aggr = kcalloc(NVME_NUM_STAT_GROUPS, size, gfp);
+		if (!aggr)
+			goto out;
+
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			work = &per_cpu_ptr(ns->info, cpu)[i].work;
-			work->ns = ns;
-			work->op_type = i;
-			INIT_WORK(&work->weight_work, nvme_mpath_weight_work);
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				work = &aggr[i].buckets[j].work;
+				work->ns = ns;
+				work->op_type = i;
+				work->bucket = j;
+				INIT_WORK(&work->weight_work,
+						nvme_mpath_weight_work);
+			}
 		}
+		ns->aggr[node] = aggr;
 	}
 
 	return 0;
+out:
+	for_each_node(node) {
+		if (!ns->aggr[node])
+			break;
+		kfree(ns->aggr[node]);
+	}
+	free_percpu(ns->stat);
+	return -ENOMEM;
 }
 
 static void nvme_mpath_set_ctrl_paths(struct nvme_ctrl *ctrl)
@@ -722,10 +790,13 @@ static inline bool nvme_state_is_live(enum nvme_ana_state state)
 }
 
 static struct nvme_ns *nvme_adaptive_path(struct nvme_ns_head *head,
-		unsigned int op_type)
+		unsigned int op_type, unsigned int sectors)
 {
 	struct nvme_ns *ns, *start, *found = NULL;
+	struct nvme_path_aggr *aggr;
+	struct nvme_path_aggr_stat *aggr_stat;
 	struct nvme_path_stat *stat;
+	enum nvme_io_bucket bucket;
 	u32 weight;
 	int cpu;
 
@@ -751,7 +822,10 @@ found_ns:
 			goto out;
 	}
 
-	stat = &this_cpu_ptr(ns->info)[op_type].stat;
+	aggr = ns->aggr[numa_node_id()];
+	stat = &per_cpu_ptr(ns->stat, cpu)[op_type];
+	bucket = nvme_mpath_get_io_bucket(sectors);
+	aggr_stat = &aggr[op_type].buckets[bucket].stat;
 
 	/*
 	 * When the head path-list is singular we don't calculate the
@@ -763,7 +837,7 @@ found_ns:
 	 * would kick in and then we start using path credit for
 	 * forwarding I/O.
 	 */
-	weight = READ_ONCE(stat->weight);
+	weight = READ_ONCE(aggr_stat->weight);
 	if (!weight) {
 		found = ns;
 		goto out;
@@ -786,7 +860,6 @@ found_ns:
 		 * refilled credit of the current path will be used next when
 		 * all remainng paths exhaust its credits.
 		 */
-		weight = READ_ONCE(stat->weight);
 		stat->credit = weight;
 		ns = list_next_entry_circular(ns, &head->list, siblings);
 		if (likely(ns))
@@ -794,7 +867,7 @@ found_ns:
 	}
 out:
 	if (found) {
-		stat->sel++;
+		atomic64_inc(&aggr_stat->sel);
 		*this_cpu_ptr(head->adp_path) = found;
 	}
 
@@ -859,11 +932,11 @@ static struct nvme_ns *nvme_numa_path(struct nvme_ns_head *head)
 }
 
 inline struct nvme_ns *nvme_find_path(struct nvme_ns_head *head,
-		unsigned int op_type)
+		unsigned int op_type, unsigned int sectors)
 {
 	switch (READ_ONCE(head->subsys->iopolicy)) {
 	case NVME_IOPOLICY_ADAPTIVE:
-		return nvme_adaptive_path(head, op_type);
+		return nvme_adaptive_path(head, op_type, sectors);
 	case NVME_IOPOLICY_QD:
 		return nvme_queue_depth_path(head);
 	case NVME_IOPOLICY_RR:
@@ -923,7 +996,7 @@ static void nvme_ns_head_submit_bio(struct bio *bio)
 		return;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, nvme_data_dir(bio_op(bio)));
+	ns = nvme_find_path(head, nvme_data_dir(bio_op(bio)), bio_sectors(bio));
 	if (likely(ns)) {
 		bio_set_dev(bio, ns->disk->part0);
 		bio->bi_opf |= REQ_NVME_MPATH;
@@ -965,7 +1038,7 @@ static int nvme_ns_head_get_unique_id(struct gendisk *disk, u8 id[16],
 	int srcu_idx, ret = -EWOULDBLOCK;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, NVME_STAT_OTHER);
+	ns = nvme_find_path(head, NVME_STAT_OTHER, 1);
 	if (ns)
 		ret = nvme_ns_get_unique_id(ns, id, type);
 	srcu_read_unlock(&head->srcu, srcu_idx);
@@ -981,7 +1054,7 @@ static int nvme_ns_head_report_zones(struct gendisk *disk, sector_t sector,
 	int srcu_idx, ret = -EWOULDBLOCK;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, NVME_STAT_OTHER);
+	ns = nvme_find_path(head, NVME_STAT_OTHER, 1);
 	if (ns)
 		ret = nvme_ns_report_zones(ns, sector, nr_zones, args);
 	srcu_read_unlock(&head->srcu, srcu_idx);

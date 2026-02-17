@@ -58,7 +58,7 @@ static int nvme_send_ns_head_pr_command(struct block_device *bdev,
 	int ret = -EWOULDBLOCK;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, NVME_STAT_OTHER);
+	ns = nvme_find_path(head, NVME_STAT_OTHER, 1);
 	if (ns) {
 		c->common.nsid = cpu_to_le32(ns->head->ns_id);
 		ret = nvme_submit_sync_cmd(ns->queue, c, data, data_len);

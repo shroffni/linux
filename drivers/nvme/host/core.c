@@ -4120,8 +4120,12 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 	struct gendisk *disk;
 	int node = ctrl->numa_node;
 	bool last_path = false;
+	size_t size = sizeof(*ns);
 
-	ns = kzalloc_node(sizeof(*ns), GFP_KERNEL, node);
+#ifdef CONFIG_NVME_MULTIPATH
+	size += (num_possible_nodes() * sizeof(struct nvme_path_aggr_stat *));
+#endif
+	ns = kzalloc_node(size, GFP_KERNEL, node);
 	if (!ns)
 		return;
 
