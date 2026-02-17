@@ -210,10 +210,12 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 	u32 weight;
 	struct nvme_ns *ns;
 	struct nvme_path_stat *stat;
+	struct nvme_path_info *info;
 	struct nvme_path_work *work = container_of(weight_work,
 			struct nvme_path_work, weight_work);
 	struct nvme_ns_head *head = work->ns->head;
 	int op_type = work->op_type;
+	enum nvme_io_bucket bucket = work->bucket;
 	u64 total_score = 0;
 
 	cpu = get_cpu();
@@ -222,7 +224,9 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 	list_for_each_entry_srcu(ns, &head->list, siblings,
 			srcu_read_lock_held(&head->srcu)) {
 
-		stat = &this_cpu_ptr(ns->info)[op_type].stat;
+		info = &this_cpu_ptr(ns->info)[op_type];
+		stat = &info->stat[bucket];
+
 		if (!READ_ONCE(stat->slat_ns)) {
 			stat->score = 0;
 			continue;
@@ -243,7 +247,6 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 
 	if (!total_score)
 		goto out;
-
 	/*
 	 * After computing the total slatency, we derive per-path weight
 	 * (normalized to the range 0–64). The weight represents the
@@ -267,9 +270,10 @@ static void nvme_mpath_weight_work(struct work_struct *weight_work)
 	list_for_each_entry_srcu(ns, &head->list, siblings,
 			srcu_read_lock_held(&head->srcu)) {
 
-		stat = &this_cpu_ptr(ns->info)[op_type].stat;
-		weight = div_u64(stat->score * 64, total_score);
+		info = &this_cpu_ptr(ns->info)[op_type];
+		stat = &info->stat[bucket];
 
+		weight = div_u64(stat->score * 64, total_score);
 		/*
 		 * Ensure the path weight never drops below 1. A weight
 		 * of 0 is used only for newly added paths. During
@@ -299,13 +303,39 @@ static inline u64 ewma_update(u64 old, u64 new, u32 ewma_shift)
 	return (old * ((1 << ewma_shift) - 1) + new) >> ewma_shift;
 }
 
+static inline enum nvme_io_bucket nvme_mpath_get_io_bucket(unsigned int sectors)
+{
+#define SZ_16K_SECTORS	(16*1024 >> SECTOR_SHIFT)
+#define SZ_32K_SECTORS	(32*1024 >> SECTOR_SHIFT)
+#define SZ_64K_SECTORS	(64*1024 >> SECTOR_SHIFT)
+#define SZ_128K_SECTORS	(128*1024 >> SECTOR_SHIFT)
+#define SZ_256K_SECTORS	(256*1024 >> SECTOR_SHIFT)
+#define SZ_512K_SECTORS	(512*1024 >> SECTOR_SHIFT)
+
+	if (sectors <= SZ_16K_SECTORS)
+		return NVME_IO_BUCKET_SMALL;
+	else if (sectors <= SZ_32K_SECTORS)
+		return NVME_IO_BUCKET_32K;
+	else if (sectors <= SZ_64K_SECTORS)
+		return NVME_IO_BUCKET_64K;
+	else if (sectors <= SZ_128K_SECTORS)
+		return NVME_IO_BUCKET_128K;
+	else if (sectors <= SZ_256K_SECTORS)
+		return NVME_IO_BUCKET_256K;
+	else if (sectors <= SZ_512K_SECTORS)
+		return NVME_IO_BUCKET_512K;
+	else
+		return NVME_IO_BUCKET_LARGE;
+}
+
 static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 {
 	int cpu;
 	unsigned int op_type;
 	struct nvme_path_info *info;
 	struct nvme_path_stat *stat;
-	u64 now, latency, slat_ns, avg_lat_ns;
+	enum nvme_io_bucket bucket;
+	u64 now, latency;
 	struct nvme_ns_head *head = ns->head;
 
 	if (list_is_singular(&head->list))
@@ -333,7 +363,8 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	cpu = blk_mq_rq_cpu(rq);
 	op_type = nvme_data_dir(req_op(rq));
 	info = &per_cpu_ptr(ns->info, cpu)[op_type];
-	stat = &info->stat;
+	bucket = nvme_mpath_get_io_bucket(blk_rq_sectors(rq));
+	stat = &info->stat[bucket];
 
 	/*
 	 * If latency > ~1s then ignore this sample to prevent EWMA from being
@@ -363,6 +394,7 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 	stat->nr_samples++;
 
 	if (now > stat->last_weight_ts) {
+		u64 slat_ns, avg_lat_ns;
 		u64 timeout = READ_ONCE(head->adp_weight_timeout);
 
 		if ((now - stat->last_weight_ts) < timeout)
@@ -401,7 +433,7 @@ static void nvme_mpath_add_sample(struct request *rq, struct nvme_ns *ns)
 		/*
 		 * Defer calculation of the path weight in per-cpu workqueue.
 		 */
-		schedule_work_on(cpu, &info->work.weight_work);
+		schedule_work_on(cpu, &info->work[bucket].weight_work);
 	}
 }
 
@@ -450,21 +482,26 @@ static const char *nvme_ana_state_names[] = {
 
 static void nvme_mpath_reset_adaptive_path_stat(struct nvme_ns *ns)
 {
-	int i, cpu;
+	int i, j, cpu;
 	struct nvme_path_stat *stat;
+	struct nvme_path_info *info;
 
 	for_each_possible_cpu(cpu) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			stat = &per_cpu_ptr(ns->info, cpu)[i].stat;
-			memset(stat, 0, sizeof(struct nvme_path_stat));
+			info = &per_cpu_ptr(ns->info, cpu)[i];
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				stat = &info->stat[j];
+				memset(stat, 0, sizeof(struct nvme_path_stat));
+			}
 		}
 	}
 }
 
 void nvme_mpath_cancel_adaptive_path_weight_work(struct nvme_ns *ns)
 {
-	int i, cpu;
+	int i, j, cpu;
 	struct nvme_path_info *info;
+	struct nvme_path_work *work;
 
 	if (!test_bit(NVME_NS_PATH_STAT, &ns->flags))
 		return;
@@ -472,7 +509,10 @@ void nvme_mpath_cancel_adaptive_path_weight_work(struct nvme_ns *ns)
 	for_each_online_cpu(cpu) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
 			info = &per_cpu_ptr(ns->info, cpu)[i];
-			cancel_work_sync(&info->work.weight_work);
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				work = &info->work[j];
+				cancel_work_sync(&work->weight_work);
+			}
 		}
 	}
 }
@@ -541,8 +581,9 @@ void nvme_mpath_clear_ctrl_paths(struct nvme_ctrl *ctrl)
 
 int nvme_alloc_ns_stat(struct nvme_ns *ns)
 {
-	int i, cpu;
+	int i, j, cpu;
 	struct nvme_path_work *work;
+	struct nvme_path_info *info;
 	gfp_t gfp = GFP_KERNEL | __GFP_ZERO;
 
 	if (!ns->head->disk)
@@ -556,10 +597,14 @@ int nvme_alloc_ns_stat(struct nvme_ns *ns)
 
 	for_each_possible_cpu(cpu) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			work = &per_cpu_ptr(ns->info, cpu)[i].work;
-			work->ns = ns;
-			work->op_type = i;
-			INIT_WORK(&work->weight_work, nvme_mpath_weight_work);
+			info = &per_cpu_ptr(ns->info, cpu)[i];
+			for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+				work = &info->work[j];
+				work->ns = ns;
+				work->op_type = i;
+				work->bucket = j;
+				INIT_WORK(&work->weight_work, nvme_mpath_weight_work);
+			}
 		}
 	}
 
@@ -722,10 +767,12 @@ static inline bool nvme_state_is_live(enum nvme_ana_state state)
 }
 
 static struct nvme_ns *nvme_adaptive_path(struct nvme_ns_head *head,
-		unsigned int op_type)
+		unsigned int op_type, unsigned int sectors)
 {
 	struct nvme_ns *ns, *start, *found = NULL;
 	struct nvme_path_stat *stat;
+	struct nvme_path_info *info;
+	enum nvme_io_bucket bucket;
 	u32 weight;
 	int cpu;
 
@@ -751,7 +798,10 @@ found_ns:
 			goto out;
 	}
 
-	stat = &this_cpu_ptr(ns->info)[op_type].stat;
+	info = &this_cpu_ptr(ns->info)[op_type];
+	bucket = nvme_mpath_get_io_bucket(sectors);
+	stat = &info->stat[bucket];
+
 
 	/*
 	 * When the head path-list is singular we don't calculate the
@@ -859,11 +909,11 @@ static struct nvme_ns *nvme_numa_path(struct nvme_ns_head *head)
 }
 
 inline struct nvme_ns *nvme_find_path(struct nvme_ns_head *head,
-		unsigned int op_type)
+		unsigned int op_type, unsigned int sectors)
 {
 	switch (READ_ONCE(head->subsys->iopolicy)) {
 	case NVME_IOPOLICY_ADAPTIVE:
-		return nvme_adaptive_path(head, op_type);
+		return nvme_adaptive_path(head, op_type, sectors);
 	case NVME_IOPOLICY_QD:
 		return nvme_queue_depth_path(head);
 	case NVME_IOPOLICY_RR:
@@ -923,7 +973,7 @@ static void nvme_ns_head_submit_bio(struct bio *bio)
 		return;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, nvme_data_dir(bio_op(bio)));
+	ns = nvme_find_path(head, nvme_data_dir(bio_op(bio)), bio_sectors(bio));
 	if (likely(ns)) {
 		bio_set_dev(bio, ns->disk->part0);
 		bio->bi_opf |= REQ_NVME_MPATH;
@@ -965,7 +1015,7 @@ static int nvme_ns_head_get_unique_id(struct gendisk *disk, u8 id[16],
 	int srcu_idx, ret = -EWOULDBLOCK;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, NVME_STAT_OTHER);
+	ns = nvme_find_path(head, NVME_STAT_OTHER, 1);
 	if (ns)
 		ret = nvme_ns_get_unique_id(ns, id, type);
 	srcu_read_unlock(&head->srcu, srcu_idx);
@@ -981,7 +1031,7 @@ static int nvme_ns_head_report_zones(struct gendisk *disk, sector_t sector,
 	int srcu_idx, ret = -EWOULDBLOCK;
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head, NVME_STAT_OTHER);
+	ns = nvme_find_path(head, NVME_STAT_OTHER, 1);
 	if (ns)
 		ret = nvme_ns_report_zones(ns, sector, nr_zones, args);
 	srcu_read_unlock(&head->srcu, srcu_idx);

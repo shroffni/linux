@@ -470,14 +470,26 @@ enum nvme_stat_group {
 	NVME_NUM_STAT_GROUPS
 };
 
+enum nvme_io_bucket {
+	NVME_IO_BUCKET_SMALL,		/* 512B-16k */
+	NVME_IO_BUCKET_32K,		/* 16k-32k */
+	NVME_IO_BUCKET_64K,		/* 32k-64k */
+	NVME_IO_BUCKET_128K,		/* 64k-128k */
+	NVME_IO_BUCKET_256K,		/* 128k-256k */
+	NVME_IO_BUCKET_512K,		/* 256k-512k */
+	NVME_IO_BUCKET_LARGE,		/* > 512k */
+
+	NVME_IO_BUCKET_MAX
+};
+
 struct nvme_path_stat {
 	u64 nr_samples;		/* total num of samples processed */
 	u64 nr_ignored;		/* num. of samples ignored */
-	u64 slat_ns;		/* smoothed (ewma) latency in nanoseconds */
-	u64 score;		/* score used for weight calculation */
-	u64 last_weight_ts;	/* timestamp of the last weight calculation */
 	u64 sel;		/* num of times this path is selcted for I/O */
+	u64 score;		/* score used for weight calculation */
+	u64 slat_ns;		/* smoothed (ewma) latency in nanoseconds */
 	u64 batch;		/* accumulated latency sum for current window */
+	u64 last_weight_ts;	/* timestamp of the last weight calculation */
 	u32 batch_count;	/* num of samples accumulated in current window */
 	u32 weight;		/* path weight */
 	u32 credit;		/* path credit for I/O forwarding */
@@ -487,11 +499,12 @@ struct nvme_path_work {
 	struct nvme_ns *ns;		/* owning namespace */
 	struct work_struct weight_work;	/* deferred work for weight calculation */
 	int op_type;			/* op type : READ/WRITE/OTHER */
+	enum nvme_io_bucket bucket;	/* I/O bucket */
 };
 
 struct nvme_path_info {
-	struct nvme_path_stat stat;	/* path statistics */
-	struct nvme_path_work work;	/* background worker context */
+	struct nvme_path_stat stat[NVME_IO_BUCKET_MAX];	/* path statistics */
+	struct nvme_path_work work[NVME_IO_BUCKET_MAX];	/* background worker context */
 };
 
 /*
@@ -998,7 +1011,8 @@ extern const struct attribute_group *nvme_dev_attr_groups[];
 extern const struct block_device_operations nvme_bdev_ops;
 
 void nvme_delete_ctrl_sync(struct nvme_ctrl *ctrl);
-struct nvme_ns *nvme_find_path(struct nvme_ns_head *head, unsigned int op_type);
+struct nvme_ns *nvme_find_path(struct nvme_ns_head *head,
+		unsigned int op_type, unsigned int sectors);
 static inline int nvme_data_dir(const enum req_op op)
 {
 	if (op == REQ_OP_READ)

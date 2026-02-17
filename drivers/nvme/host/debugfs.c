@@ -223,24 +223,53 @@ static void nvme_mpath_adp_stat_stop(struct seq_file *m, void *v)
 	srcu_read_unlock(&head->srcu, srcu_idx);
 }
 
+static char *nvme_io_bucket_name(enum nvme_io_bucket bucket)
+{
+	switch(bucket) {
+	case NVME_IO_BUCKET_SMALL:
+		return "16k  ";
+	case NVME_IO_BUCKET_32K:
+		return "32k  ";
+	case NVME_IO_BUCKET_64K:
+		return "64k  ";
+	case NVME_IO_BUCKET_128K:
+		return "128k ";
+	case NVME_IO_BUCKET_256K:
+		return "256k ";
+	case NVME_IO_BUCKET_512K:
+		return "512k ";
+	case NVME_IO_BUCKET_LARGE:
+		return ">512k";
+	default:
+		return "unknown";
+	}
+}
+
 static int nvme_mpath_adp_stat_show(struct seq_file *m, void *v)
 {
-	int i, cpu;
+	int i, j, cpu;
 	struct nvme_path_stat *stat;
+	struct nvme_path_info *info;
 	struct nvme_ns *ns = v;
 
 	seq_printf(m, "%s:\n", ns->disk->disk_name);
 	for_each_online_cpu(cpu) {
-		seq_printf(m, "cpu %d : ", cpu);
-		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			stat = &per_cpu_ptr(ns->info, cpu)[i].stat;
-			seq_printf(m, "%u %u %llu %llu %llu %llu %llu ",
-				stat->weight, stat->credit, stat->score,
-				stat->slat_ns, stat->sel,
-				stat->nr_samples, stat->nr_ignored);
+		seq_printf(m, "cpu %d:\n", cpu);
+		for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+			seq_printf(m, "%s: ", nvme_io_bucket_name(j));
+			for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
+				info = &per_cpu_ptr(ns->info, cpu)[i];
+				stat = &info->stat[j];
+				seq_printf(m, "%u %u %llu %llu %llu %llu %llu ",
+					stat->weight, stat->credit, stat->score,
+					stat->slat_ns, stat->sel,
+					stat->nr_samples, stat->nr_ignored);
+			}
+			seq_printf(m, "\n");
 		}
-		seq_putc(m, '\n');
 	}
+	seq_putc(m, '\n');
+
 	return 0;
 }
 
@@ -251,15 +280,19 @@ static const struct seq_operations nvme_mpath_adp_stat_seq_ops = {
 	.show  = nvme_mpath_adp_stat_show
 };
 
-static void adp_stat_read_all(struct nvme_ns *ns, struct nvme_path_stat *batch)
+static void adp_stat_read_all(struct nvme_ns *ns, int bucket,
+		struct nvme_path_stat *batch)
 {
 	int i, cpu;
 	u32 ncpu[NVME_NUM_STAT_GROUPS] = {0};
 	struct nvme_path_stat *stat;
+	struct nvme_path_info *info;
 
 	for_each_online_cpu(cpu) {
 		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-			stat = &per_cpu_ptr(ns->info, cpu)[i].stat;
+			info = &per_cpu_ptr(ns->info, cpu)[i];
+			stat = &info->stat[bucket];
+
 			batch[i].sel += stat->sel;
 			batch[i].nr_samples += stat->nr_samples;
 			batch[i].nr_ignored += stat->nr_ignored;
@@ -279,15 +312,22 @@ static void adp_stat_read_all(struct nvme_ns *ns, struct nvme_path_stat *batch)
 
 static int nvme_ns_adp_stat_show(void *data, struct seq_file *m)
 {
-	int i;
-	struct nvme_path_stat stat[NVME_NUM_STAT_GROUPS] = {0};
+	int i, j;
+	struct nvme_path_stat stat[NVME_NUM_STAT_GROUPS];
 	struct nvme_ns *ns = (struct nvme_ns *)data;
 
-	adp_stat_read_all(ns, stat);
-	for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
-		seq_printf(m, "%u %llu %llu %llu ",
-			stat[i].weight, stat[i].sel,
-			stat[i].nr_samples, stat[i].nr_ignored);
+	for (j = 0; j < NVME_IO_BUCKET_MAX; j++) {
+		memset(stat, 0, sizeof(stat));
+		adp_stat_read_all(ns, j, stat);
+
+		seq_printf(m, "%s: ", nvme_io_bucket_name(j));
+		for (i = 0; i < NVME_NUM_STAT_GROUPS; i++) {
+
+			seq_printf(m, "%u %llu %llu %llu ",
+				stat[i].weight, stat[i].sel,
+				stat[i].nr_samples, stat[i].nr_ignored);
+		}
+		seq_printf(m, "\n");
 	}
 	return 0;
 }
