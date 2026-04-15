@@ -16,6 +16,8 @@
 #include <net/tls.h>
 #include <net/tls_prot.h>
 #include <net/handshake.h>
+#include <net/ip6_route.h>
+#include <linux/in6.h>
 #include <linux/blk-mq.h>
 #include <net/busy_poll.h>
 #include <trace/events/sock.h>
@@ -1762,6 +1764,103 @@ static int nvme_tcp_start_tls(struct nvme_ctrl *nctrl,
 	return ret;
 }
 
+static struct net_device *nvme_tcp_get_netdev(struct nvme_ctrl *ctrl)
+{
+	struct net_device *dev = NULL;
+
+	if (ctrl->opts->mask & NVMF_OPT_HOST_IFACE)
+		dev = dev_get_by_name(&init_net, ctrl->opts->host_iface);
+	else {
+		struct nvme_tcp_ctrl *tctrl = to_tcp_ctrl(ctrl);
+
+		if (tctrl->addr.ss_family == AF_INET) {
+			struct rtable *rt;
+			struct flowi4 fl4 = {};
+			struct sockaddr_in *addr =
+					(struct sockaddr_in *)&tctrl->addr;
+
+			fl4.daddr = addr->sin_addr.s_addr;
+			if (ctrl->opts->mask & NVMF_OPT_HOST_TRADDR) {
+				addr = (struct sockaddr_in *)&tctrl->src_addr;
+				fl4.saddr = addr->sin_addr.s_addr;
+			}
+			fl4.flowi4_proto = IPPROTO_TCP;
+
+			rt = ip_route_output_key(&init_net, &fl4);
+			if (IS_ERR(rt))
+				return NULL;
+
+			dev = dst_dev(&rt->dst);
+			/*
+			 * Get reference to netdev as ip_rt_put() will
+			 * release the netdev reference.
+			 */
+			if (dev)
+				dev_hold(dev);
+
+			ip_rt_put(rt);
+
+		} else if (tctrl->addr.ss_family == AF_INET6) {
+			struct dst_entry *dst;
+			struct flowi6 fl6 = {};
+			struct sockaddr_in6 *addr6 =
+					(struct sockaddr_in6 *)&tctrl->addr;
+
+			fl6.daddr = addr6->sin6_addr;
+			if (ctrl->opts->mask & NVMF_OPT_HOST_TRADDR) {
+				addr6 = (struct sockaddr_in6 *)&tctrl->src_addr;
+				fl6.saddr = addr6->sin6_addr;
+			}
+			fl6.flowi6_proto = IPPROTO_TCP;
+
+			dst = ip6_route_output(&init_net, NULL, &fl6);
+			if (dst->error) {
+				dst_release(dst);
+				return NULL;
+			}
+
+			dev = dst_dev(dst);
+			/*
+			 * Get reference to netdev as dst_release() will
+			 * release the netdev reference.
+			 */
+			if (dev)
+				dev_hold(dev);
+
+			dst_release(dst);
+		}
+	}
+
+	return dev;
+}
+
+static void nvme_tcp_put_netdev(struct net_device *dev)
+{
+	if (dev)
+		dev_put(dev);
+}
+
+/*
+ * Returns number of active NIC queues (min of TX/RX), or 0 if device cannot
+ * be determined.
+ */
+static int nvme_tcp_get_netdev_current_queue_count(struct nvme_ctrl *ctrl)
+{
+	struct net_device *dev;
+	int tx_queues, rx_queues;
+
+	dev = nvme_tcp_get_netdev(ctrl);
+	if (!dev)
+		return 0;
+
+	tx_queues = dev->real_num_tx_queues;
+	rx_queues = dev->real_num_rx_queues;
+
+	nvme_tcp_put_netdev(dev);
+
+	return min(tx_queues, rx_queues);
+}
+
 static int nvme_tcp_alloc_queue(struct nvme_ctrl *nctrl, int qid,
 				key_serial_t pskid)
 {
@@ -2144,6 +2243,24 @@ static int nvme_tcp_alloc_io_queues(struct nvme_ctrl *ctrl)
 	unsigned int nr_io_queues;
 	int ret;
 
+	if (!(ctrl->opts->mask & NVMF_OPT_NR_IO_QUEUES) &&
+			(ctrl->opts->mask & NVMF_OPT_MATCH_HW_QUEUES)) {
+		int nr_hw_queues;
+
+		nr_hw_queues = nvme_tcp_get_netdev_current_queue_count(ctrl);
+		if (nr_hw_queues <= 0)
+			goto init_queue;
+
+		ctrl->opts->nr_io_queues = min(nr_hw_queues, num_online_cpus());
+
+		if (ctrl->opts->nr_io_queues < num_online_cpus())
+			dev_info(ctrl->device,
+				"limiting I/O queues to %u (NIC queues %d, CPUs %u)\n",
+				ctrl->opts->nr_io_queues, nr_hw_queues,
+				num_online_cpus());
+	}
+
+init_queue:
 	nr_io_queues = nvmf_nr_io_queues(ctrl->opts);
 	ret = nvme_set_queue_count(ctrl, &nr_io_queues);
 	if (ret)
@@ -3019,7 +3136,8 @@ static struct nvmf_transport_ops nvme_tcp_transport = {
 			  NVMF_OPT_HDR_DIGEST | NVMF_OPT_DATA_DIGEST |
 			  NVMF_OPT_NR_WRITE_QUEUES | NVMF_OPT_NR_POLL_QUEUES |
 			  NVMF_OPT_TOS | NVMF_OPT_HOST_IFACE | NVMF_OPT_TLS |
-			  NVMF_OPT_KEYRING | NVMF_OPT_TLS_KEY | NVMF_OPT_CONCAT,
+			  NVMF_OPT_KEYRING | NVMF_OPT_TLS_KEY |
+			  NVMF_OPT_CONCAT | NVMF_OPT_MATCH_HW_QUEUES,
 	.create_ctrl	= nvme_tcp_create_ctrl,
 };
 

@@ -709,6 +709,7 @@ static const match_table_t opt_tokens = {
 	{ NVMF_OPT_TLS,			"tls"			},
 	{ NVMF_OPT_CONCAT,		"concat"		},
 #endif
+	{ NVMF_OPT_MATCH_HW_QUEUES,	"match_hw_queues"	},
 	{ NVMF_OPT_ERR,			NULL			}
 };
 
@@ -1063,6 +1064,9 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 				goto out;
 			}
 			opts->concat = true;
+			break;
+		case NVMF_OPT_MATCH_HW_QUEUES:
+			opts->match_hw_queues = true;
 			break;
 		default:
 			pr_warn("unknown parameter or missing value '%s' in ctrl creation request\n",
