@@ -22,6 +22,56 @@ struct nvme_debugfs_ctx {
 	struct nvme_debugfs_attr *attr;
 };
 
+static void *nvme_io_queue_info_start(struct seq_file *m, loff_t *pos)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ns *ns = ctx->data;
+	struct nvme_ctrl *ctrl = ns->ctrl;
+
+	nvme_get_ctrl(ctrl);
+	/*
+	 * IO queues starts at offset 1.
+	 */
+	return (++*pos < ctrl->queue_count) ? pos : NULL;
+}
+
+static void *nvme_io_queue_info_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ns *ns = ctx->data;
+	struct nvme_ctrl *ctrl = ns->ctrl;
+
+	return (++*pos < ctrl->queue_count) ? pos : NULL;
+}
+
+static void nvme_io_queue_info_stop(struct seq_file *m, void *v)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ns *ns = ctx->data;
+	struct nvme_ctrl *ctrl = ns->ctrl;
+
+	nvme_put_ctrl(ctrl);
+}
+
+static int nvme_io_queue_info_show(struct seq_file *m, void *v)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ns *ns = ctx->data;
+	struct nvme_ctrl *ctrl = ns->ctrl;
+
+	if (ctrl->ops->print_io_queue_info)
+		return ctrl->ops->print_io_queue_info(m, ctrl, *(loff_t *)v);
+
+	return 0;
+}
+
+const struct seq_operations nvme_io_queue_info_seq_ops = {
+	.start = nvme_io_queue_info_start,
+	.next = nvme_io_queue_info_next,
+	.stop = nvme_io_queue_info_stop,
+	.show = nvme_io_queue_info_show
+};
+
 static int nvme_debugfs_show(struct seq_file *m, void *v)
 {
 	struct nvme_debugfs_ctx *ctx = m->private;
@@ -90,7 +140,8 @@ static const struct file_operations nvme_debugfs_fops = {
 };
 
 static const struct nvme_debugfs_attr nvme_ns_debugfs_attrs[] = {
-	{},
+	{"io_queue_info", 0400, .seq_ops = &nvme_io_queue_info_seq_ops},
+	{}
 };
 
 static void nvme_debugfs_create_files(struct request_queue *q,
