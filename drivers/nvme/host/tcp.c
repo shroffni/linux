@@ -11,6 +11,7 @@
 #include <linux/crc32.h>
 #include <linux/nvme-tcp.h>
 #include <linux/nvme-keyring.h>
+#include <linux/ethtool.h>
 #include <net/sock.h>
 #include <net/tcp.h>
 #include <net/tls.h>
@@ -20,6 +21,7 @@
 #include <linux/in6.h>
 #include <linux/blk-mq.h>
 #include <net/busy_poll.h>
+#include <net/netdev_lock.h>
 #include <trace/events/sock.h>
 
 #include "nvme.h"
@@ -1861,6 +1863,35 @@ static int nvme_tcp_get_netdev_current_queue_count(struct nvme_ctrl *ctrl)
 	return min(tx_queues, rx_queues);
 }
 
+static int nvme_tcp_get_netdev_max_queue_count(struct nvme_ctrl *ctrl)
+{
+	struct net_device *dev;
+	struct ethtool_channels channels = {0};
+	int max = 0;
+
+	dev = nvme_tcp_get_netdev(ctrl);
+	if (!dev)
+		return 0;
+
+	rtnl_lock();
+	if (!dev->ethtool_ops || !dev->ethtool_ops->get_channels)
+		goto out;
+
+	netdev_lock_ops(dev);
+
+	dev->ethtool_ops->get_channels(dev, &channels);
+	if (channels.max_combined)
+		max = channels.max_combined;
+	else
+		max = min(channels.max_rx, channels.max_tx);
+
+	netdev_unlock_ops(dev);
+out:
+	rtnl_unlock();
+
+	return max;
+}
+
 static int nvme_tcp_alloc_queue(struct nvme_ctrl *nctrl, int qid,
 				key_serial_t pskid)
 {
@@ -2245,19 +2276,27 @@ static int nvme_tcp_alloc_io_queues(struct nvme_ctrl *ctrl)
 
 	if (!(ctrl->opts->mask & NVMF_OPT_NR_IO_QUEUES) &&
 			(ctrl->opts->mask & NVMF_OPT_MATCH_HW_QUEUES)) {
-		int nr_hw_queues;
+		int nr_hw_queues, max_hw_queues;
 
 		nr_hw_queues = nvme_tcp_get_netdev_current_queue_count(ctrl);
 		if (nr_hw_queues <= 0)
 			goto init_queue;
 
 		ctrl->opts->nr_io_queues = min(nr_hw_queues, num_online_cpus());
-
-		if (ctrl->opts->nr_io_queues < num_online_cpus())
+		if (ctrl->opts->nr_io_queues < num_online_cpus()) {
 			dev_info(ctrl->device,
 				"limiting I/O queues to %u (NIC queues %d, CPUs %u)\n",
 				ctrl->opts->nr_io_queues, nr_hw_queues,
 				num_online_cpus());
+
+			max_hw_queues =
+				nvme_tcp_get_netdev_max_queue_count(ctrl);
+			if (max_hw_queues > nr_hw_queues)
+				dev_info(ctrl->device,
+					"NIC supports %u queues but only %u are configured; "
+					"consider increasing queue count for better perfromance\n",
+					max_hw_queues, nr_hw_queues);
+		}
 	}
 
 init_queue:
