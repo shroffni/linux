@@ -5108,6 +5108,7 @@ EXPORT_SYMBOL_GPL(nvme_remove_io_tag_set);
 
 void nvme_stop_ctrl(struct nvme_ctrl *ctrl)
 {
+	nvme_ctrl_debugfs_unregister(ctrl);
 	nvme_mpath_stop(ctrl);
 	nvme_auth_stop(ctrl);
 	nvme_stop_failfast_work(ctrl);
@@ -5143,6 +5144,8 @@ void nvme_start_ctrl(struct nvme_ctrl *ctrl)
 		nvme_unquiesce_io_queues(ctrl);
 		nvme_mpath_update(ctrl);
 	}
+
+	nvme_ctrl_debugfs_register(ctrl);
 
 	set_bit(NVME_CTRL_STARTED_ONCE, &ctrl->flags);
 	nvme_change_uevent(ctrl, "NVME_EVENT=connected");

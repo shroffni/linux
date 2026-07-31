@@ -26,6 +26,61 @@ struct nvme_debugfs_ctx {
 	struct nvme_debugfs_attr *attr;
 };
 
+static void *nvme_io_queue_info_start(struct seq_file *m, loff_t *pos)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ctrl *ctrl = ctx->data;
+
+	/*
+	 * IO queues starts at offset 1.
+	 */
+	if (!*pos)
+		++*pos;
+
+	return (*pos < ctrl->queue_count) ? pos : NULL;
+}
+
+static void *nvme_io_queue_info_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ctrl *ctrl = ctx->data;
+
+	return (++*pos < ctrl->queue_count) ? pos : NULL;
+}
+
+static void nvme_io_queue_info_stop(struct seq_file *m, void *v)
+{
+	/* nothing to be done */
+}
+
+static int nvme_io_queue_info_show(struct seq_file *m, void *v)
+{
+	struct nvme_debugfs_ctx *ctx = m->private;
+	struct nvme_ctrl *ctrl = ctx->data;
+
+	if (ctrl->ops->print_io_queue_info)
+		return ctrl->ops->print_io_queue_info(m, ctrl, *(loff_t *)v);
+
+	return 0;
+}
+
+static const struct seq_operations nvme_io_queue_info_seq_ops = {
+	.start = nvme_io_queue_info_start,
+	.next = nvme_io_queue_info_next,
+	.stop = nvme_io_queue_info_stop,
+	.show = nvme_io_queue_info_show
+};
+
+static bool nvme_debugfs_get_ns(void *data)
+{
+	return nvme_get_ns(data);
+}
+
+static void nvme_debugfs_put_ns(void *data)
+{
+	nvme_put_ns(data);
+}
+
 static int nvme_debugfs_show(struct seq_file *m, void *v)
 {
 	struct nvme_debugfs_ctx *ctx = m->private;
@@ -96,6 +151,16 @@ static int nvme_debugfs_release(struct inode *inode, struct file *file)
 	return ret;
 }
 
+static bool nvme_ctrl_io_queue_info_visible(void *data)
+{
+	struct nvme_ctrl *ctrl = data;
+
+	if (ctrl->ops->print_io_queue_info)
+		return true;
+
+	return false;
+}
+
 static const struct file_operations nvme_debugfs_fops = {
 	.owner   = THIS_MODULE,
 	.open    = nvme_debugfs_open,
@@ -105,11 +170,19 @@ static const struct file_operations nvme_debugfs_fops = {
 };
 
 static const struct nvme_debugfs_attr nvme_ns_debugfs_attrs[] = {
-	{},
+	{}
 };
 
 static const struct nvme_debugfs_attr nvme_ctrl_debugfs_attrs[] = {
-	{},
+	{
+		.name		= "io_queue_info",
+		.mode		= 0400,
+		.seq_ops	= &nvme_io_queue_info_seq_ops,
+		.get		= nvme_debugfs_get_ns,
+		.put		= nvme_debugfs_put_ns,
+		.is_visible	= nvme_ctrl_io_queue_info_visible,
+	},
+	{}
 };
 
 static void nvme_debugfs_create_files(struct dentry *debugfs_dir,
