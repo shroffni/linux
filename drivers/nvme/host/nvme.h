@@ -17,6 +17,7 @@
 #include <linux/wait.h>
 #include <linux/t10-pi.h>
 #include <linux/ratelimit_types.h>
+#include <linux/debugfs.h>
 
 #include <trace/events/block.h>
 
@@ -481,7 +482,25 @@ struct nvme_ctrl {
 	enum nvme_dctype dctype;
 
 	u16			awupf; /* 0's based value. */
+
+	struct dentry *debugfs_dir;
 };
+
+void nvme_ns_debugfs_register(struct gendisk *disk);
+static inline void nvme_ns_debugfs_unregister(struct gendisk *disk)
+{
+	/*
+	 * Nothing to do for now. When the request queue is unregistered,
+	 * all files under q->debugfs_dir are recursively deleted.
+	 * This is just a placeholder; the compiler will optimize it out.
+	 */
+}
+
+void nvme_ctrl_debugfs_register(struct nvme_ctrl *ctrl);
+static inline void nvme_ctrl_debugfs_unregister(struct nvme_ctrl *ctrl)
+{
+	debugfs_remove_recursive(ctrl->debugfs_dir);
+}
 
 static inline enum nvme_ctrl_state nvme_ctrl_state(struct nvme_ctrl *ctrl)
 {
