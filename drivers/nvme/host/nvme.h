@@ -532,6 +532,20 @@ struct nvme_ns_ids {
 };
 
 /*
+ * Enum used to classify NVMe I/O type into a stat group. Read and write
+ * I/Os are classified as NVME_STAT_GROUP_READ and NVME_STAT_GROUP_WRITE
+ * respectively; all other I/Os or admin commands are classified as
+ * NVME_STAT_GROUP_OTHER.
+ */
+enum nvme_stat_group {
+	NVME_STAT_GROUP_READ,
+	NVME_STAT_GROUP_WRITE,
+	NVME_STAT_GROUP_OTHER,
+
+	NVME_NUM_STAT_GROUPS
+};
+
+/*
  * Anchor structure for namespaces.  There is one for each namespace in a
  * NVMe subsystem that any of our controllers can see, and the namespace
  * structure for each controller is chained of it.  For private namespaces
@@ -1046,8 +1060,42 @@ extern const struct attribute_group *nvme_dev_attr_groups[];
 extern const struct block_device_operations nvme_bdev_ops;
 
 void nvme_delete_ctrl_sync(struct nvme_ctrl *ctrl);
-struct nvme_ns *nvme_find_path(struct nvme_ns_head *head)
+struct nvme_ns *nvme_find_path(struct nvme_ns_head *head,
+		enum nvme_stat_group op_type)
 	__must_hold_shared(&head->srcu);
+
+static inline enum nvme_stat_group __nvme_get_stat_group(const enum req_op op)
+{
+	if (op == REQ_OP_READ)
+		return NVME_STAT_GROUP_READ;
+	else if (op == REQ_OP_WRITE)
+		return NVME_STAT_GROUP_WRITE;
+	else
+		return NVME_STAT_GROUP_OTHER;
+}
+
+static inline enum nvme_stat_group __nvme_get_passthru_stat_group(
+		enum nvme_opcode op)
+{
+	if (op == nvme_cmd_read)
+		return NVME_STAT_GROUP_READ;
+	else if (op == nvme_cmd_write)
+		return NVME_STAT_GROUP_WRITE;
+	else
+		return NVME_STAT_GROUP_OTHER;
+}
+
+static inline enum nvme_stat_group nvme_get_stat_group(struct request *req)
+{
+	if (blk_rq_is_passthrough(req)) {
+		struct nvme_request *nr = nvme_req(req);
+
+		return __nvme_get_passthru_stat_group(nr->cmd->common.opcode);
+	}
+
+	return __nvme_get_stat_group(req_op(req));
+}
+
 #ifdef CONFIG_NVME_MULTIPATH
 static inline bool nvme_ctrl_use_ana(struct nvme_ctrl *ctrl)
 {

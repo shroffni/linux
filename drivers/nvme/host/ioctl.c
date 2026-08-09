@@ -751,12 +751,25 @@ int nvme_ns_head_ioctl(struct block_device *bdev, blk_mode_t mode,
 	struct nvme_ns *ns;
 	int srcu_idx, ret = -EWOULDBLOCK;
 	unsigned int flags = 0;
+	unsigned int op_type = NVME_STAT_GROUP_OTHER;
 
 	if (bdev_is_partition(bdev))
 		flags |= NVME_IOCTL_PARTITION;
 
+	if (cmd == NVME_IOCTL_SUBMIT_IO) {
+		u8 opcode;
+
+		if (get_user(opcode, (u8 *)argp))
+			return -EFAULT;
+
+		if (opcode == nvme_cmd_write)
+			op_type = NVME_STAT_GROUP_WRITE;
+		else if (opcode == nvme_cmd_read)
+			op_type = NVME_STAT_GROUP_READ;
+	}
+
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head);
+	ns = nvme_find_path(head, op_type);
 	if (!ns)
 		goto out_unlock;
 
@@ -785,9 +798,22 @@ long nvme_ns_head_chr_ioctl(struct file *file, unsigned int cmd,
 	void __user *argp = (void __user *)arg;
 	struct nvme_ns *ns;
 	int srcu_idx, ret = -EWOULDBLOCK;
+	unsigned int op_type = NVME_STAT_GROUP_OTHER;
+
+	if (cmd == NVME_IOCTL_SUBMIT_IO) {
+		u8 opcode;
+
+		if (get_user(opcode, (u8 *)argp))
+			return -EFAULT;
+
+		if (opcode == nvme_cmd_write)
+			op_type = NVME_STAT_GROUP_WRITE;
+		else if (opcode == nvme_cmd_read)
+			op_type = NVME_STAT_GROUP_READ;
+	}
 
 	srcu_idx = srcu_read_lock(&head->srcu);
-	ns = nvme_find_path(head);
+	ns = nvme_find_path(head, op_type);
 	if (!ns)
 		goto out_unlock;
 
@@ -804,12 +830,24 @@ out_unlock:
 int nvme_ns_head_chr_uring_cmd(struct io_uring_cmd *ioucmd,
 		unsigned int issue_flags)
 {
+	struct nvme_ns *ns;
+	unsigned int op_type;
 	struct cdev *cdev = file_inode(ioucmd->file)->i_cdev;
 	struct nvme_ns_head *head = container_of(cdev, struct nvme_ns_head, cdev);
 	int srcu_idx = srcu_read_lock(&head->srcu);
-	struct nvme_ns *ns = nvme_find_path(head);
 	int ret = -EINVAL;
+	const struct nvme_uring_cmd *cmd = io_uring_sqe128_cmd(ioucmd->sqe,
+						struct nvme_uring_cmd);
+	__u8 opcode = READ_ONCE(cmd->opcode);
 
+	if (opcode == nvme_cmd_write)
+		op_type = NVME_STAT_GROUP_WRITE;
+	else if (opcode == nvme_cmd_read)
+		op_type = NVME_STAT_GROUP_READ;
+	else
+		op_type = NVME_STAT_GROUP_OTHER;
+
+	ns = nvme_find_path(head, op_type);
 	if (ns)
 		ret = nvme_ns_uring_cmd(ns, ioucmd, issue_flags);
 	srcu_read_unlock(&head->srcu, srcu_idx);
