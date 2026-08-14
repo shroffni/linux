@@ -497,13 +497,13 @@ queue_rq_affinity_store(struct gendisk *disk, const char *page, size_t count)
 	 */
 	if (val == 2) {
 		blk_queue_flag_set(QUEUE_FLAG_SAME_COMP, q);
-		blk_queue_flag_set(QUEUE_FLAG_SAME_FORCE, q);
+		blk_mq_same_force_set(q, true);
 	} else if (val == 1) {
 		blk_queue_flag_set(QUEUE_FLAG_SAME_COMP, q);
-		blk_queue_flag_clear(QUEUE_FLAG_SAME_FORCE, q);
+		blk_mq_same_force_clear(q, true);
 	} else if (val == 0) {
 		blk_queue_flag_clear(QUEUE_FLAG_SAME_COMP, q);
-		blk_queue_flag_clear(QUEUE_FLAG_SAME_FORCE, q);
+		blk_mq_same_force_clear(q, true);
 	}
 #endif
 	return ret;

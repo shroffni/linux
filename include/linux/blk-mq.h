@@ -943,6 +943,8 @@ void blk_mq_wait_quiesce_done(struct blk_mq_tag_set *set);
 void blk_mq_quiesce_tagset(struct blk_mq_tag_set *set);
 void blk_mq_unquiesce_tagset(struct blk_mq_tag_set *set);
 void blk_mq_unquiesce_queue(struct request_queue *q);
+void blk_mq_same_force_set(struct request_queue *q, bool from_sysfs);
+void blk_mq_same_force_clear(struct request_queue *q, bool from_sysfs);
 void blk_mq_delay_run_hw_queue(struct blk_mq_hw_ctx *hctx, unsigned long msecs);
 void blk_mq_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async);
 void blk_mq_run_hw_queues(struct request_queue *q, bool async);

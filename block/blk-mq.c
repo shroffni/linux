@@ -360,6 +360,47 @@ void blk_mq_unquiesce_tagset(struct blk_mq_tag_set *set)
 }
 EXPORT_SYMBOL_GPL(blk_mq_unquiesce_tagset);
 
+void blk_mq_same_force_set(struct request_queue *q, bool from_sysfs)
+{
+	unsigned long flags = 0;
+
+	spin_lock_irqsave(&q->queue_lock, flags);
+
+	if (from_sysfs) {
+		if (q->same_force_sysfs)
+			goto unlock;
+		q->same_force_sysfs = true;
+	}
+
+	if (!q->same_force_depth++)
+		blk_queue_flag_set(QUEUE_FLAG_SAME_FORCE, q);
+unlock:
+	spin_unlock_irqrestore(&q->queue_lock, flags);
+}
+EXPORT_SYMBOL_GPL(blk_mq_same_force_set);
+
+void blk_mq_same_force_clear(struct request_queue *q, bool from_sysfs)
+{
+	unsigned long flags = 0;
+
+	spin_lock_irqsave(&q->queue_lock, flags);
+
+	if (from_sysfs) {
+		if (!q->same_force_sysfs)
+			goto unlock;
+		q->same_force_sysfs = false;
+	}
+
+	if (WARN_ON_ONCE(q->same_force_depth <= 0))
+		goto unlock;
+
+	if (!--q->same_force_depth)
+		blk_queue_flag_clear(QUEUE_FLAG_SAME_FORCE, q);
+unlock:
+	spin_unlock_irqrestore(&q->queue_lock, flags);
+}
+EXPORT_SYMBOL_GPL(blk_mq_same_force_clear);
+
 void blk_mq_wake_waiters(struct request_queue *q)
 {
 	struct blk_mq_hw_ctx *hctx;

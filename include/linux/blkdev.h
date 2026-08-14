@@ -529,6 +529,9 @@ struct request_queue {
 
 	int			quiesce_depth;
 
+	int			same_force_depth;
+	bool			same_force_sysfs;
+
 	struct gendisk		*disk;
 
 	/*

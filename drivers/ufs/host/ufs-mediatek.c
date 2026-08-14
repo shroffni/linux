@@ -2311,7 +2311,7 @@ static void ufs_mtk_config_scsi_dev(struct scsi_device *sdev)
 
 	dev_dbg(hba->dev, "lu %llu scsi device configured", sdev->lun);
 	if (sdev->lun == 2)
-		blk_queue_flag_set(QUEUE_FLAG_SAME_FORCE, sdev->request_queue);
+		blk_mq_same_force_set(sdev->request_queue, false);
 }
 
 /*
