@@ -1194,11 +1194,15 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		blk_flags |= BLK_MQ_REQ_NOWAIT;
 	if (flags & NVME_SUBMIT_RESERVED)
 		blk_flags |= BLK_MQ_REQ_RESERVED;
-	if (qid == NVME_QID_ANY)
+	if (qid == NVME_QID_ANY) {
 		req = blk_mq_alloc_request(q, nvme_req_op(cmd), blk_flags);
-	else
+	} else {
+		struct nvme_ctrl *ctrl = q->tag_set->driver_data;
+
+		/* the command names a transport queue, not a blk-mq hctx */
 		req = blk_mq_alloc_request_hctx(q, nvme_req_op(cmd), blk_flags,
-						qid - 1);
+				(qid - 1) / ctrl->queues_per_hctx);
+	}
 
 	if (IS_ERR(req))
 		return PTR_ERR(req);
@@ -5062,7 +5066,7 @@ int nvme_alloc_io_tag_set(struct nvme_ctrl *ctrl, struct blk_mq_tag_set *set,
 		set->flags |= BLK_MQ_F_BLOCKING;
 	set->cmd_size = cmd_size;
 	set->driver_data = ctrl;
-	set->nr_hw_queues = ctrl->queue_count - 1;
+	set->nr_hw_queues = (ctrl->queue_count - 1) / ctrl->queues_per_hctx;
 	set->timeout = NVME_IO_TIMEOUT;
 	set->nr_maps = nr_maps;
 	ret = blk_mq_alloc_tag_set(set);
@@ -5231,6 +5235,7 @@ int nvme_init_ctrl(struct nvme_ctrl *ctrl, struct device *dev,
 	ctrl->ops = ops;
 	ctrl->quirks = quirks;
 	ctrl->numa_node = NUMA_NO_NODE;
+	ctrl->queues_per_hctx = 1;
 	INIT_WORK(&ctrl->scan_work, nvme_scan_work);
 	INIT_WORK(&ctrl->async_event_work, nvme_async_event_work);
 	INIT_WORK(&ctrl->fw_act_work, nvme_fw_act_work);

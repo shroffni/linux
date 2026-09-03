@@ -694,6 +694,7 @@ static const match_table_t opt_tokens = {
 	{ NVMF_OPT_DATA_DIGEST,		"data_digest"		},
 	{ NVMF_OPT_NR_WRITE_QUEUES,	"nr_write_queues=%d"	},
 	{ NVMF_OPT_NR_POLL_QUEUES,	"nr_poll_queues=%d"	},
+	{ NVMF_OPT_QUEUES_PER_HCTX,	"queues_per_hctx=%d"	},
 	{ NVMF_OPT_TOS,			"tos=%d"		},
 #ifdef CONFIG_NVME_TCP_TLS
 	{ NVMF_OPT_KEYRING,		"keyring=%d"		},
@@ -727,6 +728,7 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 	/* Set defaults */
 	opts->queue_size = NVMF_DEF_QUEUE_SIZE;
 	opts->nr_io_queues = num_online_cpus();
+	opts->queues_per_hctx = 1;
 	opts->reconnect_delay = NVMF_DEF_RECONNECT_DELAY;
 	opts->kato = 0;
 	opts->duplicate_connect = false;
@@ -975,6 +977,18 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 			}
 			opts->nr_poll_queues = token;
 			break;
+		case NVMF_OPT_QUEUES_PER_HCTX:
+			if (match_int(args, &token)) {
+				ret = -EINVAL;
+				goto out;
+			}
+			if (token <= 0 || token > NVMF_MAX_QUEUES_PER_HCTX) {
+				pr_err("Invalid queues_per_hctx %d\n", token);
+				ret = -EINVAL;
+				goto out;
+			}
+			opts->queues_per_hctx = token;
+			break;
 		case NVMF_OPT_TOS:
 			if (match_int(args, &token)) {
 				ret = -EINVAL;
@@ -1078,6 +1092,7 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 		opts->nr_io_queues = 0;
 		opts->nr_write_queues = 0;
 		opts->nr_poll_queues = 0;
+		opts->queues_per_hctx = 1;
 		opts->duplicate_connect = true;
 	} else {
 		if (!opts->kato)

@@ -67,7 +67,11 @@ enum {
 	NVMF_OPT_KEYRING	= 1 << 26,
 	NVMF_OPT_TLS_KEY	= 1 << 27,
 	NVMF_OPT_CONCAT		= 1 << 28,
+	NVMF_OPT_QUEUES_PER_HCTX = 1 << 29,
 };
+
+/* Upper bound on transport queues backing a single blk-mq hctx. */
+#define NVMF_MAX_QUEUES_PER_HCTX	16
 
 /**
  * struct nvmf_ctrl_options - Used to hold the options specified
@@ -109,6 +113,7 @@ enum {
  * @nr_write_queues: number of queues for write I/O
  * @nr_poll_queues: number of queues for polling I/O
  * @tos: type of service
+ * @queues_per_hctx: transport queues backing each blk-mq hctx
  * @fast_io_fail_tmo: Fast I/O fail timeout in seconds
  */
 struct nvmf_ctrl_options {
@@ -138,6 +143,7 @@ struct nvmf_ctrl_options {
 	bool			data_digest;
 	unsigned int		nr_write_queues;
 	unsigned int		nr_poll_queues;
+	unsigned int		queues_per_hctx;
 	int			tos;
 	int			fast_io_fail_tmo;
 };
@@ -212,9 +218,10 @@ static inline void nvmf_complete_timed_out_request(struct request *rq)
 
 static inline unsigned int nvmf_nr_io_queues(struct nvmf_ctrl_options *opts)
 {
-	return min(opts->nr_io_queues, num_online_cpus()) +
+	return (min(opts->nr_io_queues, num_online_cpus()) +
 		min(opts->nr_write_queues, num_online_cpus()) +
-		min(opts->nr_poll_queues, num_online_cpus());
+		min(opts->nr_poll_queues, num_online_cpus())) *
+		opts->queues_per_hctx;
 }
 
 static inline unsigned long nvmf_get_virt_boundary(struct nvme_ctrl *ctrl,

@@ -355,6 +355,8 @@ struct nvme_ctrl {
 	int numa_node;
 	struct blk_mq_tag_set *tagset;
 	struct blk_mq_tag_set *admin_tagset;
+	/* transport queues per hctx; set before nvme_alloc_io_tag_set() */
+	unsigned int queues_per_hctx;
 	struct list_head namespaces;
 	struct mutex namespaces_lock;
 	struct srcu_struct srcu;
