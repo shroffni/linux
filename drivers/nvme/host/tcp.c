@@ -1992,7 +1992,8 @@ static int nvme_tcp_start_tls(struct nvme_ctrl *nctrl,
 		dev_err(nctrl->device,
 			"queue %d: TLS handshake failed, error %d\n",
 			qid, ret);
-		tls_handshake_cancel(queue->sock->sk);
+		if (!tls_handshake_cancel(queue->sock->sk))
+			wait_for_completion(&queue->tls_complete);
 	} else {
 		if (queue->tls_err) {
 			dev_err(nctrl->device,
