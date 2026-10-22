@@ -4211,6 +4211,14 @@ static int nvme_suspend(struct device *dev)
 		ret = nvme_set_host_mem(ndev, 0);
 		if (ret < 0)
 			goto unfreeze;
+		if (ret) {
+			/*
+			 * The controller may still access the HMB. Shut it
+			 * down instead, which forces a reset on resume.
+			 */
+			ret = nvme_disable_prepare_reset(ndev, true);
+			goto unfreeze;
+		}
 	}
 
 	ret = nvme_get_power_state(ctrl, &ndev->last_ps);
