@@ -30,7 +30,6 @@ struct elv_change_ctx;
 #define BLK_MAX_TIMEOUT		(5 * HZ)
 
 extern const struct kobj_type blk_queue_ktype;
-extern struct dentry *blk_debugfs_root;
 
 struct blk_flush_queue {
 	spinlock_t		mq_flush_lock;
@@ -787,40 +786,4 @@ static inline void blk_unfreeze_release_lock(struct request_queue *q)
 {
 }
 #endif
-
-/*
- * debugfs directory and file creation can trigger fs reclaim, which can enter
- * back into the block layer request_queue. This can cause deadlock if the
- * queue is frozen. Use NOIO context together with debugfs_mutex to prevent fs
- * reclaim from triggering block I/O.
- */
-static inline void blk_debugfs_lock_nomemsave(struct request_queue *q)
-	__acquires(&q->debugfs_mutex)
-{
-	mutex_lock(&q->debugfs_mutex);
-}
-
-static inline void blk_debugfs_unlock_nomemrestore(struct request_queue *q)
-	__releases(&q->debugfs_mutex)
-{
-	mutex_unlock(&q->debugfs_mutex);
-}
-
-static inline unsigned int __must_check blk_debugfs_lock(struct request_queue *q)
-	__acquires(&q->debugfs_mutex)
-{
-	unsigned int memflags = memalloc_noio_save();
-
-	blk_debugfs_lock_nomemsave(q);
-	return memflags;
-}
-
-static inline void blk_debugfs_unlock(struct request_queue *q,
-				      unsigned int memflags)
-	__releases(&q->debugfs_mutex)
-{
-	blk_debugfs_unlock_nomemrestore(q);
-	memalloc_noio_restore(memflags);
-}
-
 #endif /* BLK_INTERNAL_H */

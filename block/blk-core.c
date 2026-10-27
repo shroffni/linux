@@ -53,6 +53,7 @@
 #include "error-injection.h"
 
 struct dentry *blk_debugfs_root;
+EXPORT_SYMBOL_GPL(blk_debugfs_root);
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_remap);
