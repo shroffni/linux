@@ -152,7 +152,8 @@ struct nvmet_ns {
 	struct file		*bdev_file;
 	struct block_device	*bdev
 		__guarded_by(&subsys->lock);
-	struct file		*file;
+	struct file		*file
+		__guarded_by(&subsys->lock);
 	bool			readonly;
 	u32			nsid;
 	u32			blksize_shift;
@@ -201,6 +202,7 @@ static inline _type nvmet_ns_##_name(struct nvmet_ns *ns)		    \
 }
 
 NVMET_NS_ACCESSOR(struct block_device *, bdev)
+NVMET_NS_ACCESSOR(struct file *, file)
 
 static inline struct nvmet_ns *to_nvmet_ns(struct config_item *item)
 {
@@ -757,17 +759,21 @@ bool nvmet_host_allowed(struct nvmet_subsys *subsys, const char *hostnqn);
 
 int nvmet_bdev_ns_enable(struct nvmet_ns *ns)
 	__must_hold(&ns->subsys->lock);
-int nvmet_file_ns_enable(struct nvmet_ns *ns);
+int nvmet_file_ns_enable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock);
 void nvmet_bdev_ns_disable(struct nvmet_ns *ns)
 	__must_hold(&ns->subsys->lock);
-void nvmet_file_ns_disable(struct nvmet_ns *ns);
+void nvmet_file_ns_disable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock);
 u16 nvmet_bdev_flush(struct nvmet_req *req)
 	__must_hold(&req->ns->subsys->lock);
-u16 nvmet_file_flush(struct nvmet_req *req);
+u16 nvmet_file_flush(struct nvmet_req *req)
+	__must_hold(&req->ns->subsys->lock);
 void nvmet_ns_changed(struct nvmet_subsys *subsys, u32 nsid);
 void nvmet_bdev_ns_revalidate(struct nvmet_ns *ns)
 	__must_hold(&ns->subsys->lock);
-void nvmet_file_ns_revalidate(struct nvmet_ns *ns);
+void nvmet_file_ns_revalidate(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock);
 bool nvmet_ns_revalidate(struct nvmet_ns *ns)
 	__must_hold(&ns->subsys->lock);
 u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts);

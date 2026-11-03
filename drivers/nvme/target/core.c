@@ -1171,7 +1171,7 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 
 	switch (req->ns->csi) {
 	case NVME_CSI_NVM:
-		if (req->ns->file)
+		if (nvmet_ns_file(req->ns))
 			ret = nvmet_file_parse_io_cmd(req);
 		else
 			ret = nvmet_bdev_parse_io_cmd(req);
