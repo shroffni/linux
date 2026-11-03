@@ -484,12 +484,14 @@ void nvmet_put_namespace(struct nvmet_ns *ns)
 }
 
 static void nvmet_ns_dev_disable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock)
 {
 	nvmet_bdev_ns_disable(ns);
 	nvmet_file_ns_disable(ns);
 }
 
 static int nvmet_p2pmem_ns_enable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock)
 {
 	int ret;
 	struct pci_dev *p2p_dev;
@@ -535,12 +537,19 @@ static int nvmet_p2pmem_ns_enable(struct nvmet_ns *ns)
 
 static void nvmet_p2pmem_ns_add_p2p(struct nvmet_ctrl *ctrl,
 				    struct nvmet_ns *ns)
+	__must_hold(&ctrl->subsys->lock)
 {
 	struct device *clients[2];
 	struct pci_dev *p2p_dev;
 	int ret;
 
 	lockdep_assert_held(&ctrl->subsys->lock);
+	/*
+	 * Both ctrl->subsys->lock and ns->subsys->lock refers to the same lock.
+	 * However there's no way for us to annotate such locking semantics
+	 * using clang context annotation. So explicitly assert the capability.
+	 */
+	__assume_ctx_lock(&ns->subsys->lock);
 
 	if (!ctrl->p2p_client || !ns->use_p2pmem)
 		return;
@@ -615,8 +624,16 @@ int nvmet_ns_enable(struct nvmet_ns *ns)
 	if (ret)
 		goto out_dev_disable;
 
-	list_for_each_entry(ctrl, &subsys->ctrls, subsys_entry)
+	list_for_each_entry(ctrl, &subsys->ctrls, subsys_entry) {
+		/*
+		 * Both subsys->lock and ctrl->subsys->lock refers to the same
+		 * lock. However there's no way for us to annotate such locking
+		 * semantics using clang context annotation. So explicitly
+		 * assert the capability.
+		 */
+		__assume_ctx_lock(&ctrl->subsys->lock);
 		nvmet_p2pmem_ns_add_p2p(ctrl, ns);
+	}
 
 	if (ns->pr.enable) {
 		ret = nvmet_pr_init_ns(ns);
@@ -1576,6 +1593,7 @@ bool nvmet_host_allowed(struct nvmet_subsys *subsys, const char *hostnqn)
 
 static void nvmet_setup_p2p_ns_map(struct nvmet_ctrl *ctrl,
 		struct device *p2p_client)
+	__must_hold(&ctrl->subsys->lock)
 {
 	struct nvmet_ns *ns;
 	unsigned long idx;
@@ -1733,6 +1751,13 @@ struct nvmet_ctrl *nvmet_alloc_ctrl(struct nvmet_alloc_ctrl_args *args)
 	if (ret)
 		goto init_pr_fail;
 	list_add_tail(&ctrl->subsys_entry, &subsys->ctrls);
+
+	/*
+	 * Both subsys->lock and ctrl->subsys->lock refers to the same lock.
+	 * However there's no way for us to annotate such locking semantics
+	 * using clang context annotation. So explicitly assert the capability.
+	 */
+	__assume_ctx_lock(&ctrl->subsys->lock);
 	nvmet_setup_p2p_ns_map(ctrl, args->p2p_client);
 	nvmet_debugfs_ctrl_setup(ctrl);
 	mutex_unlock(&subsys->lock);

@@ -259,15 +259,17 @@ static u16 nvmet_get_smart_log_nsid(struct nvmet_req *req,
 		return status;
 
 	/* we don't have the right data for file backed ns */
-	if (!req->ns->bdev)
+	if (!nvmet_ns_bdev(req->ns))
 		return NVME_SC_SUCCESS;
 
-	host_reads = part_stat_read(req->ns->bdev, ios[READ]);
+	host_reads = part_stat_read(nvmet_ns_bdev(req->ns), ios[READ]);
 	data_units_read =
-		DIV_ROUND_UP(part_stat_read(req->ns->bdev, sectors[READ]), 1000);
-	host_writes = part_stat_read(req->ns->bdev, ios[WRITE]);
+		DIV_ROUND_UP(part_stat_read(nvmet_ns_bdev(req->ns),
+				sectors[READ]), 1000);
+	host_writes = part_stat_read(nvmet_ns_bdev(req->ns), ios[WRITE]);
 	data_units_written =
-		DIV_ROUND_UP(part_stat_read(req->ns->bdev, sectors[WRITE]), 1000);
+		DIV_ROUND_UP(part_stat_read(nvmet_ns_bdev(req->ns),
+				sectors[WRITE]), 1000);
 
 	put_unaligned_le64(host_reads, &slog->host_reads[0]);
 	put_unaligned_le64(data_units_read, &slog->data_units_read[0]);
@@ -319,7 +321,7 @@ static void nvmet_execute_get_log_page_rmi(struct nvmet_req *req)
 	if (status)
 		goto out;
 
-	if (!req->ns->bdev || !bdev_rot(req->ns->bdev)) {
+	if (!nvmet_ns_bdev(req->ns) || !bdev_rot(nvmet_ns_bdev(req->ns))) {
 		status = NVME_SC_INVALID_FIELD | NVME_STATUS_DNR;
 		goto out;
 	}
@@ -336,7 +338,7 @@ static void nvmet_execute_get_log_page_rmi(struct nvmet_req *req)
 	}
 
 	log->endgid = req->cmd->get_log_page.lsi;
-	disk = req->ns->bdev->bd_disk;
+	disk = nvmet_ns_bdev(req->ns)->bd_disk;
 	if (disk && disk->ia_ranges)
 		log->numa = cpu_to_le16(disk->ia_ranges->nr_ia_ranges);
 	else
@@ -537,15 +539,17 @@ static void nvmet_execute_get_log_page_endgrp(struct nvmet_req *req)
 		goto out;
 	}
 
-	if (!req->ns->bdev)
+	if (!nvmet_ns_bdev(req->ns))
 		goto copy;
 
-	host_reads = part_stat_read(req->ns->bdev, ios[READ]);
+	host_reads = part_stat_read(nvmet_ns_bdev(req->ns), ios[READ]);
 	data_units_read =
-		DIV_ROUND_UP(part_stat_read(req->ns->bdev, sectors[READ]), 1000);
-	host_writes = part_stat_read(req->ns->bdev, ios[WRITE]);
+		DIV_ROUND_UP(part_stat_read(nvmet_ns_bdev(req->ns),
+				sectors[READ]), 1000);
+	host_writes = part_stat_read(nvmet_ns_bdev(req->ns), ios[WRITE]);
 	data_units_written =
-		DIV_ROUND_UP(part_stat_read(req->ns->bdev, sectors[WRITE]), 1000);
+		DIV_ROUND_UP(part_stat_read(nvmet_ns_bdev(req->ns),
+				sectors[WRITE]), 1000);
 
 	put_unaligned_le64(host_reads, &log->hrc[0]);
 	put_unaligned_le64(data_units_read, &log->dur[0]);
@@ -859,11 +863,10 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 		goto done;
 	}
 
-	if (nvmet_ns_revalidate(req->ns)) {
-		mutex_lock(&req->ns->subsys->lock);
+	mutex_lock(&req->ns->subsys->lock);
+	if (nvmet_ns_revalidate(req->ns))
 		nvmet_ns_changed(req->ns->subsys, req->ns->nsid);
-		mutex_unlock(&req->ns->subsys->lock);
-	}
+	mutex_unlock(&req->ns->subsys->lock);
 
 	/*
 	 * nuse = ncap = nsze isn't always true, but we have no way to find
@@ -880,8 +883,8 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 		break;
 	}
 
-	if (req->ns->bdev)
-		nvmet_bdev_set_limits(req->ns->bdev, id);
+	if (nvmet_ns_bdev(req->ns))
+		nvmet_bdev_set_limits(nvmet_ns_bdev(req->ns), id);
 
 	/*
 	 * We just provide a single LBA format that matches what the
@@ -1095,8 +1098,8 @@ static void nvme_execute_identify_ns_nvm(struct nvmet_req *req)
 		status = NVME_SC_INTERNAL;
 		goto out;
 	}
-	if (req->ns->bdev)
-		nvmet_bdev_set_nvm_limits(req->ns->bdev, id);
+	if (nvmet_ns_bdev(req->ns))
+		nvmet_bdev_set_nvm_limits(nvmet_ns_bdev(req->ns), id);
 	status = nvmet_copy_to_sgl(req, 0, id, sizeof(*id));
 	kfree(id);
 out:
@@ -1123,14 +1126,14 @@ static void nvmet_execute_id_cs_indep(struct nvmet_req *req)
 	id->nmic = NVME_NS_NMIC_SHARED;
 	if (req->ns->readonly)
 		id->nsattr |= NVME_NS_ATTR_RO;
-	if (req->ns->bdev && bdev_rot(req->ns->bdev))
+	if (nvmet_ns_bdev(req->ns) && bdev_rot(nvmet_ns_bdev(req->ns)))
 		id->nsfeat |= NVME_NS_ROTATIONAL;
 	/*
 	 * We need flush command to flush the file's metadata,
 	 * so report supporting vwc if backend is file, even
 	 * though buffered_io is disable.
 	 */
-	if (req->ns->bdev && !bdev_write_cache(req->ns->bdev))
+	if (nvmet_ns_bdev(req->ns) && !bdev_write_cache(nvmet_ns_bdev(req->ns)))
 		id->nsfeat |= NVME_NS_VWC_NOT_PRESENT;
 
 	status = nvmet_copy_to_sgl(req, 0, id, sizeof(*id));
@@ -1216,6 +1219,7 @@ static void nvmet_execute_abort(struct nvmet_req *req)
 }
 
 static u16 nvmet_write_protect_flush_sync(struct nvmet_req *req)
+	__must_hold(&req->ns->subsys->lock)
 {
 	u16 status;
 
@@ -1239,7 +1243,7 @@ static u16 nvmet_set_feat_write_protect(struct nvmet_req *req)
 	if (status)
 		return status;
 
-	mutex_lock(&subsys->lock);
+	mutex_lock(&req->ns->subsys->lock);
 	switch (write_protect) {
 	case NVME_NS_WRITE_PROTECT:
 		req->ns->readonly = true;
@@ -1257,7 +1261,7 @@ static u16 nvmet_set_feat_write_protect(struct nvmet_req *req)
 
 	if (!status)
 		nvmet_ns_changed(subsys, req->ns->nsid);
-	mutex_unlock(&subsys->lock);
+	mutex_unlock(&req->ns->subsys->lock);
 	return status;
 }
 

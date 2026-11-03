@@ -73,6 +73,7 @@ void nvmet_bdev_ns_disable(struct nvmet_ns *ns)
 }
 
 static void nvmet_bdev_ns_enable_integrity(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock)
 {
 	struct blk_integrity *bi = bdev_get_integrity(ns->bdev);
 
@@ -206,7 +207,7 @@ static int nvmet_bdev_alloc_bip(struct nvmet_req *req, struct bio *bio,
 	int rc;
 	size_t resid, len;
 
-	bi = bdev_get_integrity(req->ns->bdev);
+	bi = bdev_get_integrity(nvmet_ns_bdev(req->ns));
 	if (unlikely(!bi)) {
 		pr_err("Unable to locate bio_integrity\n");
 		return -ENODEV;
@@ -291,11 +292,11 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 
 	if (nvmet_use_inline_bvec(req)) {
 		bio = &req->b.inline_bio;
-		bio_init(bio, req->ns->bdev, req->inline_bvec,
+		bio_init(bio, nvmet_ns_bdev(req->ns), req->inline_bvec,
 			 ARRAY_SIZE(req->inline_bvec), opf);
 	} else {
-		bio = bio_alloc(req->ns->bdev, bio_max_segs(sg_cnt), opf,
-				GFP_KERNEL);
+		bio = bio_alloc(nvmet_ns_bdev(req->ns), bio_max_segs(sg_cnt),
+				opf, GFP_KERNEL);
 	}
 	bio->bi_iter.bi_sector = sector;
 	bio->bi_private = req;
@@ -320,8 +321,9 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 				}
 			}
 
-			bio = bio_alloc(req->ns->bdev, bio_max_segs(sg_cnt),
-					opf, GFP_KERNEL);
+			bio = bio_alloc(nvmet_ns_bdev(req->ns),
+					bio_max_segs(sg_cnt), opf,
+					GFP_KERNEL);
 			bio->bi_iter.bi_sector = sector;
 
 			bio_chain(bio, prev);
@@ -349,7 +351,7 @@ static void nvmet_bdev_execute_flush(struct nvmet_req *req)
 {
 	struct bio *bio = &req->b.inline_bio;
 
-	if (!bdev_write_cache(req->ns->bdev)) {
+	if (!bdev_write_cache(nvmet_ns_bdev(req->ns))) {
 		nvmet_req_complete(req, NVME_SC_SUCCESS);
 		return;
 	}
@@ -357,7 +359,7 @@ static void nvmet_bdev_execute_flush(struct nvmet_req *req)
 	if (!nvmet_check_transfer_len(req, 0))
 		return;
 
-	bio_init(bio, req->ns->bdev, req->inline_bvec,
+	bio_init(bio, nvmet_ns_bdev(req->ns), req->inline_bvec,
 		 ARRAY_SIZE(req->inline_bvec), REQ_OP_WRITE | REQ_PREFLUSH);
 	bio->bi_private = req;
 	bio->bi_end_io = nvmet_bio_done;
@@ -392,7 +394,7 @@ static void nvmet_bdev_execute_discard(struct nvmet_req *req)
 
 		nr_sects = (sector_t)le32_to_cpu(range.nlb) <<
 			   (ns->blksize_shift - 9);
-		__blkdev_issue_discard(ns->bdev,
+		__blkdev_issue_discard(nvmet_ns_bdev(ns),
 				nvmet_lba_to_sect(ns, range.slba), nr_sects,
 				GFP_KERNEL, &bio);
 	}
@@ -442,7 +444,7 @@ static void nvmet_bdev_execute_write_zeroes(struct nvmet_req *req)
 	nr_sector = (((sector_t)le16_to_cpu(write_zeroes->length) + 1) <<
 		(req->ns->blksize_shift - 9));
 
-	ret = __blkdev_issue_zeroout(req->ns->bdev, sector, nr_sector,
+	ret = __blkdev_issue_zeroout(nvmet_ns_bdev(req->ns), sector, nr_sector,
 			GFP_KERNEL, &bio, 0);
 	if (bio) {
 		bio->bi_private = req;

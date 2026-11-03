@@ -110,30 +110,29 @@ void nvmet_execute_identify_ns_zns(struct nvmet_req *req)
 	if (status)
 		goto out;
 
-	if (nvmet_ns_revalidate(req->ns)) {
-		mutex_lock(&req->ns->subsys->lock);
+	mutex_lock(&req->ns->subsys->lock);
+	if (nvmet_ns_revalidate(req->ns))
 		nvmet_ns_changed(req->ns->subsys, req->ns->nsid);
-		mutex_unlock(&req->ns->subsys->lock);
-	}
+	mutex_unlock(&req->ns->subsys->lock);
 
-	if (!req->ns->bdev || !bdev_is_zoned(req->ns->bdev)) {
+	if (!nvmet_ns_bdev(req->ns) || !bdev_is_zoned(nvmet_ns_bdev(req->ns))) {
 		status = NVME_SC_INVALID_FIELD | NVME_STATUS_DNR;
 		req->error_loc = offsetof(struct nvme_identify, nsid);
 		goto out;
 	}
 
-	zsze = (bdev_zone_sectors(req->ns->bdev) << 9) >>
+	zsze = (bdev_zone_sectors(nvmet_ns_bdev(req->ns)) << 9) >>
 					req->ns->blksize_shift;
 	id_zns->lbafe[0].zsze = cpu_to_le64(zsze);
 
-	mor = bdev_max_open_zones(req->ns->bdev);
+	mor = bdev_max_open_zones(nvmet_ns_bdev(req->ns));
 	if (!mor)
 		mor = U32_MAX;
 	else
 		mor--;
 	id_zns->mor = cpu_to_le32(mor);
 
-	mar = bdev_max_active_zones(req->ns->bdev);
+	mar = bdev_max_active_zones(nvmet_ns_bdev(req->ns));
 	if (!mar)
 		mar = U32_MAX;
 	else
@@ -151,7 +150,7 @@ static u16 nvmet_bdev_validate_zone_mgmt_recv(struct nvmet_req *req)
 	sector_t sect = nvmet_lba_to_sect(req->ns, req->cmd->zmr.slba);
 	u32 out_bufsize = (le32_to_cpu(req->cmd->zmr.numd) + 1) << 2;
 
-	if (sect >= get_capacity(req->ns->bdev->bd_disk)) {
+	if (sect >= get_capacity(nvmet_ns_bdev(req->ns)->bd_disk)) {
 		req->error_loc = offsetof(struct nvme_zone_mgmt_recv_cmd, slba);
 		return NVME_SC_LBA_RANGE | NVME_STATUS_DNR;
 	}
@@ -247,7 +246,8 @@ static unsigned long nvmet_req_nr_zones_from_slba(struct nvmet_req *req)
 {
 	unsigned int sect = nvmet_lba_to_sect(req->ns, req->cmd->zmr.slba);
 
-	return bdev_nr_zones(req->ns->bdev) - bdev_zone_no(req->ns->bdev, sect);
+	return bdev_nr_zones(nvmet_ns_bdev(req->ns)) -
+			bdev_zone_no(nvmet_ns_bdev(req->ns), sect);
 }
 
 static unsigned long get_nr_zones_from_buf(struct nvmet_req *req, u32 bufsize)
@@ -291,8 +291,8 @@ static void nvmet_bdev_zone_zmgmt_recv_work(struct work_struct *w)
 		goto out;
 	}
 
-	ret = blkdev_report_zones(req->ns->bdev, start_sect, req_slba_nr_zones,
-				 nvmet_bdev_report_zone_cb, &rz_data);
+	ret = blkdev_report_zones(nvmet_ns_bdev(req->ns), start_sect,
+			req_slba_nr_zones, nvmet_bdev_report_zone_cb, &rz_data);
 	if (ret < 0) {
 		status = NVME_SC_INTERNAL;
 		goto out;
@@ -415,7 +415,7 @@ static int zmgmt_send_scan_cb(struct blk_zone *z, unsigned i, void *d)
 
 static u16 nvmet_bdev_zone_mgmt_emulate_all(struct nvmet_req *req)
 {
-	struct block_device *bdev = req->ns->bdev;
+	struct block_device *bdev = nvmet_ns_bdev(req->ns);
 	unsigned int nr_zones = bdev_nr_zones(bdev);
 	struct bio *bio = NULL;
 	sector_t sector = 0;
@@ -471,8 +471,9 @@ static u16 nvmet_bdev_execute_zmgmt_send_all(struct nvmet_req *req)
 
 	switch (zsa_req_op(req->cmd->zms.zsa)) {
 	case REQ_OP_ZONE_RESET:
-		ret = blkdev_zone_mgmt(req->ns->bdev, REQ_OP_ZONE_RESET, 0,
-				       get_capacity(req->ns->bdev->bd_disk));
+		ret = blkdev_zone_mgmt(nvmet_ns_bdev(req->ns),
+				REQ_OP_ZONE_RESET, 0,
+				get_capacity(nvmet_ns_bdev(req->ns)->bd_disk));
 		if (ret < 0)
 			return blkdev_zone_mgmt_errno_to_nvme_status(ret);
 		break;
@@ -494,7 +495,7 @@ static void nvmet_bdev_zmgmt_send_work(struct work_struct *w)
 	struct nvmet_req *req = container_of(w, struct nvmet_req, z.zmgmt_work);
 	sector_t sect = nvmet_lba_to_sect(req->ns, req->cmd->zms.slba);
 	enum req_op op = zsa_req_op(req->cmd->zms.zsa);
-	struct block_device *bdev = req->ns->bdev;
+	struct block_device *bdev = nvmet_ns_bdev(req->ns);
 	sector_t zone_sectors = bdev_zone_sectors(bdev);
 	u16 status = NVME_SC_SUCCESS;
 	int ret;
@@ -560,13 +561,14 @@ void nvmet_bdev_execute_zone_append(struct nvmet_req *req)
 	u32 data_len = nvmet_rw_data_len(req);
 	struct bio *bio;
 	int sg_cnt;
+	struct block_device *bdev = nvmet_ns_bdev(req->ns);
 
 	/* Request is completed on len mismatch in nvmet_check_transfer_len() */
 	if (!nvmet_check_transfer_len(req, nvmet_rw_data_len(req)))
 		return;
 
 	if (data_len >
-	    bdev_max_zone_append_sectors(req->ns->bdev) << SECTOR_SHIFT) {
+	    bdev_max_zone_append_sectors(bdev) << SECTOR_SHIFT) {
 		req->error_loc = offsetof(struct nvme_rw_command, length);
 		status = NVME_SC_INVALID_FIELD | NVME_STATUS_DNR;
 		goto out;
@@ -577,13 +579,13 @@ void nvmet_bdev_execute_zone_append(struct nvmet_req *req)
 		return;
 	}
 
-	if (sect >= get_capacity(req->ns->bdev->bd_disk)) {
+	if (sect >= get_capacity(bdev->bd_disk)) {
 		req->error_loc = offsetof(struct nvme_rw_command, slba);
 		status = NVME_SC_LBA_RANGE | NVME_STATUS_DNR;
 		goto out;
 	}
 
-	if (sect & (bdev_zone_sectors(req->ns->bdev) - 1)) {
+	if (sect & (bdev_zone_sectors(bdev) - 1)) {
 		req->error_loc = offsetof(struct nvme_rw_command, slba);
 		status = NVME_SC_INVALID_FIELD | NVME_STATUS_DNR;
 		goto out;
@@ -591,10 +593,10 @@ void nvmet_bdev_execute_zone_append(struct nvmet_req *req)
 
 	if (nvmet_use_inline_bvec(req)) {
 		bio = &req->z.inline_bio;
-		bio_init(bio, req->ns->bdev, req->inline_bvec,
+		bio_init(bio, bdev, req->inline_bvec,
 			 ARRAY_SIZE(req->inline_bvec), opf);
 	} else {
-		bio = bio_alloc(req->ns->bdev, req->sg_cnt, opf, GFP_KERNEL);
+		bio = bio_alloc(bdev, req->sg_cnt, opf, GFP_KERNEL);
 	}
 
 	bio->bi_end_io = nvmet_bdev_zone_append_bio_done;
