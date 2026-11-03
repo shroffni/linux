@@ -1236,9 +1236,10 @@ static u16 nvmet_write_protect_flush_sync(struct nvmet_req *req)
 	__must_hold(&req->ns->subsys->lock)
 {
 	u16 status;
+	struct file *file = req->ns->file;
 
-	if (req->ns->file)
-		status = nvmet_file_flush(req);
+	if (file)
+		status = nvmet_file_flush(req, file);
 	else
 		status = nvmet_bdev_flush(req);
 
