@@ -484,12 +484,14 @@ void nvmet_put_namespace(struct nvmet_ns *ns)
 }
 
 static void nvmet_ns_dev_disable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock)
 {
 	nvmet_bdev_ns_disable(ns);
 	nvmet_file_ns_disable(ns);
 }
 
 static int nvmet_p2pmem_ns_enable(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock)
 {
 	int ret;
 	struct pci_dev *p2p_dev;
@@ -533,14 +535,21 @@ static int nvmet_p2pmem_ns_enable(struct nvmet_ns *ns)
 	return 0;
 }
 
-static void nvmet_p2pmem_ns_add_p2p(struct nvmet_ctrl *ctrl,
-				    struct nvmet_ns *ns)
+static void nvmet_p2pmem_ns_add_p2p(struct nvmet_subsys *subsys,
+		struct nvmet_ctrl *ctrl, struct nvmet_ns *ns)
+	__must_hold(&subsys->lock)
 {
 	struct device *clients[2];
 	struct pci_dev *p2p_dev;
 	int ret;
 
-	lockdep_assert_held(&ctrl->subsys->lock);
+	/*
+	 * Although subsys->lock and ns->subsys->lock refer to the same lock,
+	 * clang's thread-safety analysis cannot infer this relationship. Assert
+	 * that ns->subsys->lock is held to satisfy the corresponding lock
+	 * annotation.
+	 */
+	lockdep_assert_held(&ns->subsys->lock);
 
 	if (!ctrl->p2p_client || !ns->use_p2pmem)
 		return;
@@ -616,7 +625,7 @@ int nvmet_ns_enable(struct nvmet_ns *ns)
 		goto out_dev_disable;
 
 	list_for_each_entry(ctrl, &subsys->ctrls, subsys_entry)
-		nvmet_p2pmem_ns_add_p2p(ctrl, ns);
+		nvmet_p2pmem_ns_add_p2p(subsys, ctrl, ns);
 
 	if (ns->pr.enable) {
 		ret = nvmet_pr_init_ns(ns);
@@ -1574,13 +1583,14 @@ bool nvmet_host_allowed(struct nvmet_subsys *subsys, const char *hostnqn)
 	return false;
 }
 
-static void nvmet_setup_p2p_ns_map(struct nvmet_ctrl *ctrl,
-		struct device *p2p_client)
+static void nvmet_setup_p2p_ns_map(struct nvmet_subsys *subsys,
+		struct nvmet_ctrl *ctrl, struct device *p2p_client)
+	__must_hold(&subsys->lock)
 {
 	struct nvmet_ns *ns;
 	unsigned long idx;
 
-	lockdep_assert_held(&ctrl->subsys->lock);
+	lockdep_assert_held(&subsys->lock);
 
 	if (!p2p_client)
 		return;
@@ -1588,7 +1598,7 @@ static void nvmet_setup_p2p_ns_map(struct nvmet_ctrl *ctrl,
 	ctrl->p2p_client = get_device(p2p_client);
 
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns)
-		nvmet_p2pmem_ns_add_p2p(ctrl, ns);
+		nvmet_p2pmem_ns_add_p2p(subsys, ctrl, ns);
 }
 
 static void nvmet_release_p2p_ns_map(struct nvmet_ctrl *ctrl)
@@ -1733,7 +1743,7 @@ struct nvmet_ctrl *nvmet_alloc_ctrl(struct nvmet_alloc_ctrl_args *args)
 	if (ret)
 		goto init_pr_fail;
 	list_add_tail(&ctrl->subsys_entry, &subsys->ctrls);
-	nvmet_setup_p2p_ns_map(ctrl, args->p2p_client);
+	nvmet_setup_p2p_ns_map(subsys, ctrl, args->p2p_client);
 	nvmet_debugfs_ctrl_setup(ctrl);
 	mutex_unlock(&subsys->lock);
 	up_read(&nvmet_config_sem);

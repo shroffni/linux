@@ -594,7 +594,7 @@ static void nvmet_rdma_set_sig_attrs(struct nvmet_req *req,
 	u8 pi_type = req->ns->pi_type;
 	struct blk_integrity *bi;
 
-	bi = bdev_get_integrity(req->ns->bdev);
+	bi = bdev_get_integrity(nvmet_ns_bdev(req->ns));
 
 	memset(sig_attrs, 0, sizeof(*sig_attrs));
 
