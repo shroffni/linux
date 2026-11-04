@@ -289,7 +289,15 @@ static u16 nvmet_get_smart_log_all(struct nvmet_req *req,
 	unsigned long idx;
 
 	ctrl = req->sq->ctrl;
+	mutex_lock(&ctrl->subsys->lock);
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
+		/*
+		 * Both ctrl->subsys->lock and ns->subsys->lock refer to the
+		 * same lock. However there's no way for us to annotate such
+		 * locking semantics using clang context annotation. So
+		 * explicitly assert the capability.
+		 */
+		__assume_ctx_lock(&ns->subsys->lock);
 		/* we don't have the right data for file backed ns */
 		if (!ns->bdev)
 			continue;
@@ -300,6 +308,7 @@ static u16 nvmet_get_smart_log_all(struct nvmet_req *req,
 		data_units_written += DIV_ROUND_UP(
 			part_stat_read(ns->bdev, sectors[WRITE]), 1000);
 	}
+	mutex_unlock(&ctrl->subsys->lock);
 
 	put_unaligned_le64(host_reads, &slog->host_reads[0]);
 	put_unaligned_le64(data_units_read, &slog->data_units_read[0]);
