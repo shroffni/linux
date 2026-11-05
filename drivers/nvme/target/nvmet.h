@@ -149,7 +149,8 @@ struct nvmet_subsys {
 
 struct nvmet_ns {
 	struct percpu_ref	ref;
-	struct file		*bdev_file;
+	struct file		*bdev_file
+		__guarded_by(&subsys->lock);
 	struct block_device	*bdev
 		__guarded_by(&subsys->lock);
 	struct file		*file
