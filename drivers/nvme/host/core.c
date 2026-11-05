@@ -4378,24 +4378,16 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, struct nvme_ns_info *info)
 	mutex_lock(&ctrl->subsys->lock);
 	list_del_rcu(&ns->siblings);
 	if (list_empty(&ns->head->list)) {
-		list_del_init(&ns->head->entry);
-		/*
-		 * If multipath is not configured, we still create a namespace
-		 * head (nshead), but head->disk is not initialized in that
-		 * case.  As a result, only a single reference to nshead is held
-		 * (via kref_init()) when it is created. Therefore, ensure that
-		 * we do not release the reference to nshead twice if head->disk
-		 * is not present.
-		 */
-		if (ns->head->disk)
-			last_path = true;
+		if (!nvme_mpath_queue_if_no_path(ns->head))
+			list_del_init(&ns->head->entry);
+		last_path = true;
 	}
 	mutex_unlock(&ctrl->subsys->lock);
 
 	/* guarantee not available in head->list */
 	synchronize_srcu(&ns->head->srcu);
 	if (last_path)
-		nvme_put_ns_head(ns->head);
+		nvme_mpath_remove_disk(ns->head);
 	nvme_put_ns_head(ns->head);
  out_cleanup_disk:
 	put_disk(disk);
