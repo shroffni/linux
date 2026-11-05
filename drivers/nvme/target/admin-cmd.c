@@ -938,7 +938,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 		id->lbaf[0].ms = cpu_to_le16(req->ns->metadata_size);
 	}
 
-	if (req->ns->readonly)
+	if (nvmet_ns_readonly(req->ns))
 		id->nsattr |= NVME_NS_ATTR_RO;
 done:
 	if (!status)
@@ -1133,7 +1133,7 @@ static void nvmet_execute_id_cs_indep(struct nvmet_req *req)
 	id->nstat = NVME_NSTAT_NRDY;
 	id->anagrpid = cpu_to_le32(req->ns->anagrpid);
 	id->nmic = NVME_NS_NMIC_SHARED;
-	if (req->ns->readonly)
+	if (nvmet_ns_readonly(req->ns))
 		id->nsattr |= NVME_NS_ATTR_RO;
 	if (nvmet_ns_bdev(req->ns) && bdev_rot(nvmet_ns_bdev(req->ns)))
 		id->nsfeat |= NVME_NS_ROTATIONAL;
@@ -1255,13 +1255,13 @@ static u16 nvmet_set_feat_write_protect(struct nvmet_req *req)
 	mutex_lock(&req->ns->subsys->lock);
 	switch (write_protect) {
 	case NVME_NS_WRITE_PROTECT:
-		req->ns->readonly = true;
+		WRITE_ONCE(req->ns->readonly, true);
 		status = nvmet_write_protect_flush_sync(req);
 		if (status)
-			req->ns->readonly = false;
+			WRITE_ONCE(req->ns->readonly, false);
 		break;
 	case NVME_NS_NO_WRITE_PROTECT:
-		req->ns->readonly = false;
+		WRITE_ONCE(req->ns->readonly, false);
 		status = 0;
 		break;
 	default:
@@ -1451,20 +1451,19 @@ void nvmet_execute_set_features(struct nvmet_req *req)
 
 static u16 nvmet_get_feat_write_protect(struct nvmet_req *req)
 {
-	struct nvmet_subsys *subsys = nvmet_req_subsys(req);
 	u32 result;
 
 	result = nvmet_req_find_ns(req);
 	if (result)
 		return result;
 
-	mutex_lock(&subsys->lock);
+	mutex_lock(&req->ns->subsys->lock);
 	if (req->ns->readonly == true)
 		result = NVME_NS_WRITE_PROTECT;
 	else
 		result = NVME_NS_NO_WRITE_PROTECT;
 	nvmet_set_result(req, result);
-	mutex_unlock(&subsys->lock);
+	mutex_unlock(&req->ns->subsys->lock);
 
 	return 0;
 }

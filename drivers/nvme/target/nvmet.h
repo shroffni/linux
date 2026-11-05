@@ -155,7 +155,8 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	struct file		*file
 		__guarded_by(&subsys->lock);
-	bool			readonly;
+	bool			readonly
+		__guarded_by(&subsys->lock);
 	u32			nsid;
 	u32			blksize_shift;
 	loff_t			size;
@@ -204,6 +205,19 @@ static inline _type nvmet_ns_##_name(struct nvmet_ns *ns)		    \
 
 NVMET_NS_ACCESSOR(struct block_device *, bdev)
 NVMET_NS_ACCESSOR(struct file *, file)
+
+/*
+ * These accessors use data_race() and READ_ONCE() to allow lockless access to
+ * the corresponding fields. Use them only in code paths where a concurrent
+ * update to the field is harmless and the resulting data race is acceptable.
+ */
+#define NVMET_NS_ACCESSOR_RACE(_type, _name)				\
+static inline _type nvmet_ns_##_name(struct nvmet_ns *ns)		\
+{									\
+	return data_race(READ_ONCE(ns->_name));				\
+}									\
+
+NVMET_NS_ACCESSOR_RACE(bool, readonly)
 
 static inline struct nvmet_ns *to_nvmet_ns(struct config_item *item)
 {

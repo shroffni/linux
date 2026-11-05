@@ -1090,7 +1090,7 @@ static inline u16 nvmet_check_ana_state(struct nvmet_port *port,
 
 static inline u16 nvmet_io_cmd_check_access(struct nvmet_req *req)
 {
-	if (unlikely(req->ns->readonly)) {
+	if (unlikely(nvmet_ns_readonly(req->ns))) {
 		switch (req->cmd->common.opcode) {
 		case nvme_cmd_read:
 		case nvme_cmd_flush:
