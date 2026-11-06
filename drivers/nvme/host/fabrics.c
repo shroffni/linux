@@ -872,12 +872,6 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 			opts->fast_io_fail_tmo = token;
 			break;
 		case NVMF_OPT_HOSTNQN:
-			if (opts->host) {
-				pr_err("hostnqn already user-assigned: %s\n",
-				       opts->host->nqn);
-				ret = -EADDRINUSE;
-				goto out;
-			}
 			p = match_strdup(args);
 			if (!p) {
 				ret = -ENOMEM;
