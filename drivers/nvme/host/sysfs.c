@@ -618,8 +618,6 @@ static ssize_t nvme_ctrl_reconnect_delay_show(struct device *dev,
 {
 	struct nvme_ctrl *ctrl = dev_get_drvdata(dev);
 
-	if (ctrl->opts->reconnect_delay == -1)
-		return sysfs_emit(buf, "off\n");
 	return sysfs_emit(buf, "%d\n", ctrl->opts->reconnect_delay);
 }
 
