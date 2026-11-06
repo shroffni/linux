@@ -512,10 +512,19 @@ static u32 nvmet_format_ana_group(struct nvmet_req *req, u32 grpid,
 	u32 count = 0;
 
 	if (!(req->cmd->get_log_page.lsp & NVME_ANA_LOG_RGO)) {
+		mutex_lock(&ctrl->subsys->lock);
 		nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
+			/*
+			 * Both ctrl->subsys->lock and ns->subsys->lock refers
+			 * to the same lock. However there's no way for us to
+			 * annotate such locking semantics using clang context
+			 * annotation. So explicitly assert the capability.
+			 */
+			__assume_ctx_lock(&ns->subsys->lock);
 			if (ns->anagrpid == grpid)
 				desc->nsids[count++] = cpu_to_le32(ns->nsid);
 		}
+		mutex_unlock(&ctrl->subsys->lock);
 	}
 
 	desc->grpid = cpu_to_le32(grpid);
@@ -966,7 +975,16 @@ static void nvmet_execute_identify_endgrp_list(struct nvmet_req *req)
 		goto out;
 	}
 
+	mutex_lock(&ctrl->subsys->lock);
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
+		/*
+		 * Both ctrl->subsys->lock and ns->subsys->lock refers to the
+		 * same lock. However there's no way for us to annotate such
+		 * locking semantics using clang context annotation. So
+		 * explicitly assert the capability.
+		 */
+		__assume_ctx_lock(&ns->subsys->lock);
+
 		if (ns->nsid <= min_endgid)
 			continue;
 
@@ -974,6 +992,7 @@ static void nvmet_execute_identify_endgrp_list(struct nvmet_req *req)
 		if (i == buf_size / sizeof(__le16))
 			break;
 	}
+	mutex_unlock(&ctrl->subsys->lock);
 
 	list[0] = cpu_to_le16(i - 1);
 	status = nvmet_copy_to_sgl(req, 0, list, buf_size);
@@ -1009,7 +1028,16 @@ static void nvmet_execute_identify_nslist(struct nvmet_req *req, bool match_css)
 		goto out;
 	}
 
+	mutex_lock(&ctrl->subsys->lock);
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
+		/*
+		 * Both ctrl->subsys->lock and ns->subsys->lock refers to the
+		 * same lock. However there's no way for us to annotate such
+		 * locking semantics using clang context annotation. So
+		 * explicitly assert the capability.
+		 */
+		__assume_ctx_lock(&ns->subsys->lock);
+
 		if (ns->nsid <= min_nsid)
 			continue;
 		if (match_css && ns->csi != req->cmd->identify.csi)
@@ -1018,6 +1046,7 @@ static void nvmet_execute_identify_nslist(struct nvmet_req *req, bool match_css)
 		if (i == buf_size / sizeof(__le32))
 			break;
 	}
+	mutex_unlock(&ctrl->subsys->lock);
 
 	status = nvmet_copy_to_sgl(req, 0, list, buf_size);
 
