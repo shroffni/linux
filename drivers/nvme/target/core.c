@@ -118,13 +118,22 @@ u16 nvmet_zero_sgl(struct nvmet_req *req, off_t off, size_t len)
 }
 
 static u32 nvmet_max_nsid(struct nvmet_subsys *subsys)
+	__must_hold(&subsys->lock)
 {
 	struct nvmet_ns *cur;
 	unsigned long idx;
 	u32 nsid = 0;
 
-	nvmet_for_each_enabled_ns(&subsys->namespaces, idx, cur)
+	nvmet_for_each_enabled_ns(&subsys->namespaces, idx, cur) {
+		/*
+		 * Both ns->subsys->lock and subsys->lock refers to the same
+		 * lock. However there's no way for us to annotate such locking
+		 * semantics using clang context annotation. So explicitly
+		 * assert the capability.
+		 */
+		__assume_ctx_lock(&cur->subsys->lock);
 		nsid = cur->nsid;
+	}
 
 	return nsid;
 }
@@ -746,6 +755,12 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 
 	init_completion(&ns->disable_done);
 
+	/*
+	 * Both subsys->lock and ns->subsys->lock refers to the same lock.
+	 * However there's no way for us to annotate such locking semantics
+	 * using clang context annotation. So explicitly assert the capability.
+	 */
+	__assume_ctx_lock(&ns->subsys->lock);
 	ns->nsid = nsid;
 	ns->subsys = subsys;
 
@@ -757,6 +772,7 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 
 	subsys->nr_namespaces++;
 
+	__release_ctx_lock(&ns->subsys->lock);
 	mutex_unlock(&subsys->lock);
 
 	down_write(&nvmet_ana_sem);
@@ -1361,7 +1377,8 @@ static struct pci_dev *nvmet_req_find_p2p_dev(struct nvmet_req *req)
 	if (!IS_ENABLED(CONFIG_PCI_P2PDMA) ||
 	    !req->sq->ctrl || !req->sq->qid || !req->ns)
 		return NULL;
-	return radix_tree_lookup(&req->sq->ctrl->p2p_ns_map, req->ns->nsid);
+	return radix_tree_lookup(&req->sq->ctrl->p2p_ns_map,
+			nvmet_ns_nsid(req->ns));
 }
 
 int nvmet_req_alloc_sgls(struct nvmet_req *req)

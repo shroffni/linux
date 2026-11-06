@@ -922,7 +922,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 	 * Since we don't know any better, every namespace is its own endurance
 	 * group.
 	 */
-	id->endgid = cpu_to_le16(req->ns->nsid);
+	id->endgid = cpu_to_le16(nvmet_ns_nsid(req->ns));
 
 	memcpy(&id->nguid, &req->ns->nguid, sizeof(id->nguid));
 
@@ -1268,8 +1268,16 @@ static u16 nvmet_set_feat_write_protect(struct nvmet_req *req)
 		break;
 	}
 
-	if (!status)
+	if (!status) {
+		/*
+		 * Both ns->subsys->lock and subsys->lock refers to the same
+		 * lock. However there's no way for us to annotate such locking
+		 * semantics using clang context annotation. So explicitly
+		 * assert the capability.
+		 */
+		__assume_ctx_lock(&subsys->lock);
 		nvmet_ns_changed(subsys, req->ns->nsid);
+	}
 	mutex_unlock(&req->ns->subsys->lock);
 	return status;
 }
