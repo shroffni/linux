@@ -390,7 +390,6 @@ struct nvme_queue {
 	unsigned long flags;
 #define NVMEQ_ENABLED		0
 #define NVMEQ_SQ_CMB		1
-#define NVMEQ_DELETE_ERROR	2
 #define NVMEQ_POLLED		3
 	__le32 *dbbuf_sq_db;
 	__le32 *dbbuf_cq_db;
@@ -2459,8 +2458,6 @@ static int nvme_create_queue(struct nvme_queue *nvmeq, int qid, bool polled)
 	int result;
 	u16 vector = 0;
 
-	clear_bit(NVMEQ_DELETE_ERROR, &nvmeq->flags);
-
 	/*
 	 * A queue's vector matches the queue identifier unless the controller
 	 * has only one vector available.
@@ -3322,18 +3319,6 @@ static enum rq_end_io_ret nvme_del_queue_end(struct request *req,
 	return RQ_END_IO_NONE;
 }
 
-static enum rq_end_io_ret nvme_del_cq_end(struct request *req,
-					  blk_status_t error,
-					  const struct io_comp_batch *iob)
-{
-	struct nvme_queue *nvmeq = req->end_io_data;
-
-	if (error)
-		set_bit(NVMEQ_DELETE_ERROR, &nvmeq->flags);
-
-	return nvme_del_queue_end(req, error, iob);
-}
-
 static int nvme_delete_queue(struct nvme_queue *nvmeq, u8 opcode)
 {
 	struct request_queue *q = nvmeq->dev->ctrl.admin_q;
@@ -3348,10 +3333,7 @@ static int nvme_delete_queue(struct nvme_queue *nvmeq, u8 opcode)
 		return PTR_ERR(req);
 	nvme_init_request(req, &cmd);
 
-	if (opcode == nvme_admin_delete_cq)
-		req->end_io = nvme_del_cq_end;
-	else
-		req->end_io = nvme_del_queue_end;
+	req->end_io = nvme_del_queue_end;
 	req->end_io_data = nvmeq;
 
 	init_completion(&nvmeq->delete_done);
