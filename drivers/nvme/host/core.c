@@ -4903,7 +4903,7 @@ static void nvme_fw_act_work(struct work_struct *work)
 	if (ctrl->mtfa)
 		fw_act_timeout = jiffies + msecs_to_jiffies(ctrl->mtfa * 100);
 	else
-		fw_act_timeout = jiffies + secs_to_jiffies(admin_timeout);
+		fw_act_timeout = jiffies + NVME_ADMIN_TIMEOUT;
 
 	nvme_quiesce_io_queues(ctrl);
 	while (nvme_ctrl_pp_status(ctrl)) {
