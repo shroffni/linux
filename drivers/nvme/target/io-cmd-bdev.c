@@ -393,7 +393,7 @@ static void nvmet_bdev_execute_discard(struct nvmet_req *req)
 			break;
 
 		nr_sects = (sector_t)le32_to_cpu(range.nlb) <<
-			   (ns->blksize_shift - 9);
+			   (nvmet_ns_blksize_shift(ns) - 9);
 		__blkdev_issue_discard(nvmet_ns_bdev(ns),
 				nvmet_lba_to_sect(ns, range.slba), nr_sects,
 				GFP_KERNEL, &bio);
@@ -442,7 +442,7 @@ static void nvmet_bdev_execute_write_zeroes(struct nvmet_req *req)
 
 	sector = nvmet_lba_to_sect(req->ns, write_zeroes->slba);
 	nr_sector = (((sector_t)le16_to_cpu(write_zeroes->length) + 1) <<
-		(req->ns->blksize_shift - 9));
+		(nvmet_ns_blksize_shift(req->ns) - 9));
 
 	ret = __blkdev_issue_zeroout(nvmet_ns_bdev(req->ns), sector, nr_sector,
 			GFP_KERNEL, &bio, 0);

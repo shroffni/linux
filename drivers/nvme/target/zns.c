@@ -122,7 +122,7 @@ void nvmet_execute_identify_ns_zns(struct nvmet_req *req)
 	}
 
 	zsze = (bdev_zone_sectors(nvmet_ns_bdev(req->ns)) << 9) >>
-					req->ns->blksize_shift;
+					nvmet_ns_blksize_shift(req->ns);
 	id_zns->lbafe[0].zsze = cpu_to_le64(zsze);
 
 	mor = bdev_max_open_zones(nvmet_ns_bdev(req->ns));

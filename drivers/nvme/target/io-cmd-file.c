@@ -122,7 +122,7 @@ static bool nvmet_file_check_lba_range(struct nvmet_req *req, u64 slba,
 {
 	u64 pos64;
 
-	if (check_shl_overflow(slba, req->ns->blksize_shift, &pos64) ||
+	if (check_shl_overflow(slba, nvmet_ns_blksize_shift(req->ns), &pos64) ||
 	    pos64 > req->ns->size || len > req->ns->size - pos64)
 		return false;
 
@@ -305,7 +305,7 @@ static void nvmet_file_execute_discard(struct nvmet_req *req)
 			break;
 
 		if (check_shl_overflow((u64)le32_to_cpu(range.nlb),
-				       req->ns->blksize_shift, &len64) ||
+				nvmet_ns_blksize_shift(req->ns), &len64) ||
 		    !nvmet_file_check_lba_range(req, le64_to_cpu(range.slba),
 					len64, &offset)) {
 			req->error_slba = le64_to_cpu(range.slba);
@@ -361,7 +361,7 @@ static void nvmet_file_write_zeroes_work(struct work_struct *w)
 	int ret;
 
 	if (check_shl_overflow((u64)le16_to_cpu(write_zeroes->length) + 1,
-			       req->ns->blksize_shift, &len64) ||
+			nvmet_ns_blksize_shift(req->ns), &len64) ||
 	    !nvmet_file_check_lba_range(req, le64_to_cpu(write_zeroes->slba),
 				len64, &offset)) {
 		nvmet_req_complete(req, errno_to_nvme_status(req, -ENOSPC));
