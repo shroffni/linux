@@ -99,6 +99,12 @@ void nvmet_execute_get_log_page_resv(struct nvmet_req *req)
 	u64 cur_count;
 	u64 next_count;
 
+	status = nvmet_zero_sgl(req, 0, req->transfer_len);
+	if (status) {
+		nvmet_req_complete(req, status);
+		return;
+	}
+
 	mutex_lock(&log_mgr->lock);
 	if (!kfifo_get(&log_mgr->log_queue, &log))
 		goto out;
