@@ -15,7 +15,7 @@
 
 void nvmet_file_ns_revalidate(struct nvmet_ns *ns)
 {
-	ns->size = i_size_read(ns->file->f_mapping->host);
+	WRITE_ONCE(ns->size, i_size_read(ns->file->f_mapping->host));
 }
 
 void nvmet_file_ns_disable(struct nvmet_ns *ns)
@@ -68,7 +68,7 @@ int nvmet_file_ns_enable(struct nvmet_ns *ns)
 err:
 	fput(ns->file);
 	ns->file = NULL;
-	ns->size = 0;
+	WRITE_ONCE(ns->size, 0);
 	ns->blksize_shift = 0;
 	return ret;
 }
@@ -123,7 +123,8 @@ static bool nvmet_file_check_lba_range(struct nvmet_req *req, u64 slba,
 	u64 pos64;
 
 	if (check_shl_overflow(slba, nvmet_ns_blksize_shift(req->ns), &pos64) ||
-	    pos64 > req->ns->size || len > req->ns->size - pos64)
+	    pos64 > nvmet_ns_size(req->ns) ||
+	    len > nvmet_ns_size(req->ns) - pos64)
 		return false;
 
 	*pos = pos64;
