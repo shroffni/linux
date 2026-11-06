@@ -161,7 +161,8 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	u32			blksize_shift
 		__guarded_by(&subsys->lock);
-	loff_t			size;
+	loff_t			size
+		__guarded_by(&subsys->lock);
 	u8			nguid[16];
 	uuid_t			uuid;
 	u32			anagrpid;
@@ -222,6 +223,7 @@ static inline _type nvmet_ns_##_name(struct nvmet_ns *ns)		\
 }									\
 
 NVMET_NS_ACCESSOR_RACE(bool, readonly)
+NVMET_NS_ACCESSOR_RACE(loff_t, size)
 
 static inline struct nvmet_ns *to_nvmet_ns(struct config_item *item)
 {

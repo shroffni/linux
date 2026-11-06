@@ -591,14 +591,14 @@ static void nvmet_p2pmem_ns_add_p2p(struct nvmet_ctrl *ctrl,
 
 bool nvmet_ns_revalidate(struct nvmet_ns *ns)
 {
-	loff_t oldsize = ns->size;
+	loff_t oldsize = READ_ONCE(ns->size);
 
 	if (ns->bdev)
 		nvmet_bdev_ns_revalidate(ns);
 	else
 		nvmet_file_ns_revalidate(ns);
 
-	return oldsize != ns->size;
+	return oldsize != READ_ONCE(ns->size);
 }
 
 int nvmet_ns_enable(struct nvmet_ns *ns)

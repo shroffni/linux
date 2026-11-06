@@ -15,7 +15,7 @@
 
 void nvmet_file_ns_revalidate(struct nvmet_ns *ns)
 {
-	ns->size = i_size_read(ns->file->f_mapping->host);
+	WRITE_ONCE(ns->size, i_size_read(ns->file->f_mapping->host));
 }
 
 void nvmet_file_ns_disable(struct nvmet_ns *ns)
@@ -68,7 +68,7 @@ int nvmet_file_ns_enable(struct nvmet_ns *ns)
 err:
 	fput(ns->file);
 	ns->file = NULL;
-	ns->size = 0;
+	WRITE_ONCE(ns->size, 0);
 	ns->blksize_shift = 0;
 	return ret;
 }
@@ -132,7 +132,7 @@ static bool nvmet_file_execute_io(struct nvmet_req *req, int ki_flags)
 		is_sync = true;
 
 	pos = le64_to_cpu(req->cmd->rw.slba) << nvmet_ns_blksize_shift(req->ns);
-	if (unlikely(pos + req->transfer_len > req->ns->size)) {
+	if (unlikely(pos + req->transfer_len > nvmet_ns_size(req->ns))) {
 		ret = -ENOSPC;
 		goto complete;
 	}
@@ -301,7 +301,7 @@ static void nvmet_file_execute_discard(struct nvmet_req *req)
 				nvmet_ns_blksize_shift(req->ns);
 		len = le32_to_cpu(range.nlb);
 		len <<= nvmet_ns_blksize_shift(req->ns);
-		if (offset + len > req->ns->size) {
+		if (offset + len > nvmet_ns_size(req->ns)) {
 			req->error_slba = le64_to_cpu(range.slba);
 			status = errno_to_nvme_status(req, -ENOSPC);
 			break;
@@ -357,7 +357,7 @@ static void nvmet_file_write_zeroes_work(struct work_struct *w)
 	len = (((sector_t)le16_to_cpu(write_zeroes->length) + 1) <<
 			nvmet_ns_blksize_shift(req->ns));
 
-	if (unlikely(offset + len > req->ns->size)) {
+	if (unlikely(offset + len > nvmet_ns_size(req->ns))) {
 		nvmet_req_complete(req, errno_to_nvme_status(req, -ENOSPC));
 		return;
 	}
