@@ -42,7 +42,6 @@ static struct nvmet_type_name_map nvmet_transport[] = {
 };
 
 static const struct nvmet_type_name_map nvmet_addr_family[] = {
-	{ NVMF_ADDR_FAMILY_PCI,		"pcie" },
 	{ NVMF_ADDR_FAMILY_IP4,		"ipv4" },
 	{ NVMF_ADDR_FAMILY_IP6,		"ipv6" },
 	{ NVMF_ADDR_FAMILY_IB,		"ib" },
@@ -68,7 +67,7 @@ static ssize_t nvmet_addr_adrfam_show(struct config_item *item, char *page)
 	u8 adrfam = to_nvmet_port(item)->disc_addr.adrfam;
 	int i;
 
-	for (i = 1; i < ARRAY_SIZE(nvmet_addr_family); i++) {
+	for (i = 0; i < ARRAY_SIZE(nvmet_addr_family); i++) {
 		if (nvmet_addr_family[i].type == adrfam)
 			return snprintf(page, PAGE_SIZE, "%s\n",
 					nvmet_addr_family[i].name);
@@ -86,7 +85,7 @@ static ssize_t nvmet_addr_adrfam_store(struct config_item *item,
 	if (nvmet_is_port_enabled(port, __func__))
 		return -EACCES;
 
-	for (i = 1; i < ARRAY_SIZE(nvmet_addr_family); i++) {
+	for (i = 0; i < ARRAY_SIZE(nvmet_addr_family); i++) {
 		if (sysfs_streq(page, nvmet_addr_family[i].name))
 			goto found;
 	}
