@@ -131,7 +131,7 @@ static bool nvmet_file_execute_io(struct nvmet_req *req, int ki_flags)
 	if (req->f.mpool_alloc && nr_bvec > NVMET_MAX_MPOOL_BVEC)
 		is_sync = true;
 
-	pos = le64_to_cpu(req->cmd->rw.slba) << req->ns->blksize_shift;
+	pos = le64_to_cpu(req->cmd->rw.slba) << nvmet_ns_blksize_shift(req->ns);
 	if (unlikely(pos + req->transfer_len > req->ns->size)) {
 		ret = -ENOSPC;
 		goto complete;
@@ -297,9 +297,10 @@ static void nvmet_file_execute_discard(struct nvmet_req *req)
 		if (status)
 			break;
 
-		offset = le64_to_cpu(range.slba) << req->ns->blksize_shift;
+		offset = le64_to_cpu(range.slba) <<
+				nvmet_ns_blksize_shift(req->ns);
 		len = le32_to_cpu(range.nlb);
-		len <<= req->ns->blksize_shift;
+		len <<= nvmet_ns_blksize_shift(req->ns);
 		if (offset + len > req->ns->size) {
 			req->error_slba = le64_to_cpu(range.slba);
 			status = errno_to_nvme_status(req, -ENOSPC);
@@ -351,9 +352,10 @@ static void nvmet_file_write_zeroes_work(struct work_struct *w)
 	loff_t len;
 	int ret;
 
-	offset = le64_to_cpu(write_zeroes->slba) << req->ns->blksize_shift;
+	offset = le64_to_cpu(write_zeroes->slba) <<
+			nvmet_ns_blksize_shift(req->ns);
 	len = (((sector_t)le16_to_cpu(write_zeroes->length) + 1) <<
-			req->ns->blksize_shift);
+			nvmet_ns_blksize_shift(req->ns));
 
 	if (unlikely(offset + len > req->ns->size)) {
 		nvmet_req_complete(req, errno_to_nvme_status(req, -ENOSPC));

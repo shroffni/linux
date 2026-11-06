@@ -891,7 +891,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 	 * that out from the underlying device.
 	 */
 	id->ncap = id->nsze =
-		cpu_to_le64(req->ns->size >> req->ns->blksize_shift);
+		cpu_to_le64(req->ns->size >> nvmet_ns_blksize_shift(req->ns));
 	switch (req->port->ana_state[req->ns->anagrpid]) {
 	case NVME_ANA_INACCESSIBLE:
 	case NVME_ANA_PERSISTENT_LOSS:
@@ -935,7 +935,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 
 	memcpy(&id->nguid, &req->ns->nguid, sizeof(id->nguid));
 
-	id->lbaf[0].ds = req->ns->blksize_shift;
+	id->lbaf[0].ds = nvmet_ns_blksize_shift(req->ns);
 
 	if (req->sq->ctrl->pi_support && nvmet_ns_has_pi(req->ns)) {
 		id->dpc = NVME_NS_DPC_PI_FIRST | NVME_NS_DPC_PI_LAST |

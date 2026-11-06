@@ -159,7 +159,8 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	u32			nsid
 		__guarded_by(&subsys->lock);
-	u32			blksize_shift;
+	u32			blksize_shift
+		__guarded_by(&subsys->lock);
 	loff_t			size;
 	u8			nguid[16];
 	uuid_t			uuid;
@@ -207,6 +208,7 @@ static inline _type nvmet_ns_##_name(struct nvmet_ns *ns)		    \
 NVMET_NS_ACCESSOR(struct block_device *, bdev)
 NVMET_NS_ACCESSOR(struct file *, file)
 NVMET_NS_ACCESSOR(u32, nsid)
+NVMET_NS_ACCESSOR(u32, blksize_shift)
 
 /*
  * These accessors use data_race() and READ_ONCE() to allow lockless access to
@@ -807,7 +809,7 @@ void nvmet_bdev_execute_zone_append(struct nvmet_req *req);
 static inline u32 nvmet_rw_data_len(struct nvmet_req *req)
 {
 	return ((u32)le16_to_cpu(req->cmd->rw.length) + 1) <<
-			req->ns->blksize_shift;
+			nvmet_ns_blksize_shift(req->ns);
 }
 
 static inline u32 nvmet_rw_metadata_len(struct nvmet_req *req)
@@ -1000,12 +1002,12 @@ static inline bool nvmet_ns_has_pi(struct nvmet_ns *ns)
 
 static inline __le64 nvmet_sect_to_lba(struct nvmet_ns *ns, sector_t sect)
 {
-	return cpu_to_le64(sect >> (ns->blksize_shift - SECTOR_SHIFT));
+	return cpu_to_le64(sect >> (nvmet_ns_blksize_shift(ns) - SECTOR_SHIFT));
 }
 
 static inline sector_t nvmet_lba_to_sect(struct nvmet_ns *ns, __le64 lba)
 {
-	return le64_to_cpu(lba) << (ns->blksize_shift - SECTOR_SHIFT);
+	return le64_to_cpu(lba) << (nvmet_ns_blksize_shift(ns) - SECTOR_SHIFT);
 }
 
 static inline bool nvmet_use_inline_bvec(struct nvmet_req *req)
