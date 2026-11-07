@@ -193,7 +193,8 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	int			metadata_size
 		__guarded_by(&subsys->lock);
-	u8			csi;
+	u8			csi
+		__guarded_by(&subsys->lock);
 	struct nvmet_pr		pr;
 	struct xarray		pr_per_ctrl_refs;
 #ifdef CONFIG_NVME_TARGET_DEBUGFS
@@ -225,6 +226,7 @@ NVMET_NS_ACCESSOR(bool, buffered_io)
 NVMET_NS_ACCESSOR(const char *, device_path)
 NVMET_NS_ACCESSOR(int, pi_type)
 NVMET_NS_ACCESSOR(int, metadata_size)
+NVMET_NS_ACCESSOR(u8, csi)
 
 /*
  * These accessors use data_race() and READ_ONCE() to allow lockless access to

@@ -1083,6 +1083,7 @@ static void nvmet_execute_identify_desclist(struct nvmet_req *req)
 	off_t off = 0;
 	u16 status;
 	uuid_t uuid;
+	u8 csi;
 
 	status = nvmet_req_find_ns(req);
 	if (status)
@@ -1105,9 +1106,10 @@ static void nvmet_execute_identify_desclist(struct nvmet_req *req)
 			goto out;
 	}
 
+	csi = nvmet_ns_csi(req->ns);
 	status = nvmet_copy_ns_identifier(req, NVME_NIDT_CSI,
 					  NVME_NIDT_CSI_LEN,
-					  &req->ns->csi, &off);
+					  &csi, &off);
 	if (status)
 		goto out;
 

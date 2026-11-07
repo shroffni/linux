@@ -772,6 +772,7 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 
 	subsys->nr_namespaces++;
 	uuid_gen(&ns->uuid);
+	ns->csi = NVME_CSI_NVM;
 
 	__release_ctx_lock(&ns->subsys->lock);
 	mutex_unlock(&subsys->lock);
@@ -780,8 +781,6 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 	ns->anagrpid = NVMET_DEFAULT_ANA_GRPID;
 	nvmet_ana_group_enabled[ns->anagrpid]++;
 	up_write(&nvmet_ana_sem);
-
-	ns->csi = NVME_CSI_NVM;
 
 	return ns;
 out_exit:
@@ -1184,7 +1183,7 @@ static u16 nvmet_parse_io_cmd(struct nvmet_req *req)
 			return ret;
 	}
 
-	switch (req->ns->csi) {
+	switch (nvmet_ns_csi(req->ns)) {
 	case NVME_CSI_NVM:
 		if (nvmet_ns_file(req->ns))
 			ret = nvmet_file_parse_io_cmd(req);
