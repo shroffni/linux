@@ -771,6 +771,7 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 		goto out_exit;
 
 	subsys->nr_namespaces++;
+	uuid_gen(&ns->uuid);
 
 	__release_ctx_lock(&ns->subsys->lock);
 	mutex_unlock(&subsys->lock);
@@ -780,7 +781,6 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 	nvmet_ana_group_enabled[ns->anagrpid]++;
 	up_write(&nvmet_ana_sem);
 
-	uuid_gen(&ns->uuid);
 	ns->buffered_io = false;
 	ns->csi = NVME_CSI_NVM;
 
