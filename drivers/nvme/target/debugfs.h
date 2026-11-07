@@ -14,8 +14,10 @@ int nvmet_debugfs_subsys_setup(struct nvmet_subsys *subsys);
 void nvmet_debugfs_subsys_free(struct nvmet_subsys *subsys);
 int nvmet_debugfs_ctrl_setup(struct nvmet_ctrl *ctrl);
 void nvmet_debugfs_ctrl_free(struct nvmet_ctrl *ctrl);
-void nvmet_debugfs_ns_setup(struct nvmet_ns *ns);
-void nvmet_debugfs_ns_free(struct nvmet_ns *ns);
+void nvmet_debugfs_ns_setup(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock);
+void nvmet_debugfs_ns_free(struct nvmet_ns *ns)
+	__must_hold(&ns->subsys->lock);
 
 int __init nvmet_init_debugfs(void);
 void nvmet_exit_debugfs(void);
