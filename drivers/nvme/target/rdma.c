@@ -591,7 +591,7 @@ static void nvmet_rdma_set_sig_attrs(struct nvmet_req *req,
 {
 	struct nvme_command *cmd = req->cmd;
 	u16 control = le16_to_cpu(cmd->rw.control);
-	u8 pi_type = req->ns->pi_type;
+	u8 pi_type = nvmet_ns_pi_type(req->ns);
 	struct blk_integrity *bi;
 
 	bi = bdev_get_integrity(nvmet_ns_bdev(req->ns));

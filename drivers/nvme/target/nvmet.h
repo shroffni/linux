@@ -189,8 +189,10 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	int			use_p2pmem
 		__guarded_by(&subsys->lock);
-	int			pi_type;
-	int			metadata_size;
+	int			pi_type
+		__guarded_by(&subsys->lock);
+	int			metadata_size
+		__guarded_by(&subsys->lock);
 	u8			csi;
 	struct nvmet_pr		pr;
 	struct xarray		pr_per_ctrl_refs;
@@ -221,6 +223,8 @@ NVMET_NS_ACCESSOR(u8 *, nguid)
 NVMET_NS_ACCESSOR(uuid_t, uuid)
 NVMET_NS_ACCESSOR(bool, buffered_io)
 NVMET_NS_ACCESSOR(const char *, device_path)
+NVMET_NS_ACCESSOR(int, pi_type)
+NVMET_NS_ACCESSOR(int, metadata_size)
 
 /*
  * These accessors use data_race() and READ_ONCE() to allow lockless access to
@@ -830,7 +834,7 @@ static inline u32 nvmet_rw_metadata_len(struct nvmet_req *req)
 	if (!IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY))
 		return 0;
 	return ((u32)le16_to_cpu(req->cmd->rw.length) + 1) *
-			req->ns->metadata_size;
+			nvmet_ns_metadata_size(req->ns);
 }
 
 static inline u32 nvmet_dsm_len(struct nvmet_req *req)
@@ -1010,7 +1014,8 @@ static inline bool nvmet_ns_has_pi(struct nvmet_ns *ns)
 {
 	if (!IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY))
 		return false;
-	return ns->pi_type && ns->metadata_size == sizeof(struct t10_pi_tuple);
+	return nvmet_ns_pi_type(ns) &&
+	       nvmet_ns_metadata_size(ns) == sizeof(struct t10_pi_tuple);
 }
 
 static inline __le64 nvmet_sect_to_lba(struct nvmet_ns *ns, sector_t sect)

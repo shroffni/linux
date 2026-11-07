@@ -943,9 +943,9 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 			  NVME_NS_DPC_PI_TYPE1 | NVME_NS_DPC_PI_TYPE2 |
 			  NVME_NS_DPC_PI_TYPE3;
 		id->mc = NVME_MC_EXTENDED_LBA;
-		id->dps = req->ns->pi_type;
+		id->dps = nvmet_ns_pi_type(req->ns);
 		id->flbas = NVME_NS_FLBAS_META_EXT;
-		id->lbaf[0].ms = cpu_to_le16(req->ns->metadata_size);
+		id->lbaf[0].ms = cpu_to_le16(nvmet_ns_metadata_size(req->ns));
 	}
 
 	if (nvmet_ns_readonly(req->ns))
