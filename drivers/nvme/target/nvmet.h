@@ -185,8 +185,10 @@ struct nvmet_ns {
 	struct completion	disable_done;
 	mempool_t		*bvec_pool;
 
-	struct pci_dev		*p2p_dev;
-	int			use_p2pmem;
+	struct pci_dev		*p2p_dev
+		__guarded_by(&subsys->lock);
+	int			use_p2pmem
+		__guarded_by(&subsys->lock);
 	int			pi_type;
 	int			metadata_size;
 	u8			csi;
