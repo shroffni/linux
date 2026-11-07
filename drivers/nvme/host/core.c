@@ -5196,6 +5196,8 @@ void nvme_uninit_ctrl(struct nvme_ctrl *ctrl)
 {
 	nvme_stop_keep_alive(ctrl);
 	nvme_hwmon_exit(ctrl);
+	/* transports remove their queue directories before this point */
+	nvme_queue_dir_destroy(ctrl);
 	nvme_fault_inject_fini(&ctrl->fault_inject);
 	dev_pm_qos_hide_latency_tolerance(ctrl->device);
 	cdev_device_del(&ctrl->cdev, ctrl->device);
@@ -5340,6 +5342,12 @@ int nvme_add_ctrl(struct nvme_ctrl *ctrl)
 	if (ret)
 		return ret;
 
+	if (ctrl->ops->queue_attr_groups) {
+		ret = nvme_queue_dir_create(ctrl);
+		if (ret)
+			goto out_del_cdev;
+	}
+
 	/*
 	 * Initialize latency tolerance controls.  The sysfs files won't
 	 * be visible to userspace unless the device actually supports APST.
@@ -5352,6 +5360,10 @@ int nvme_add_ctrl(struct nvme_ctrl *ctrl)
 	nvme_get_ctrl(ctrl);
 
 	return 0;
+
+out_del_cdev:
+	cdev_device_del(&ctrl->cdev, ctrl->device);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(nvme_add_ctrl);
 
