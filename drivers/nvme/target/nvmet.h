@@ -171,7 +171,8 @@ struct nvmet_ns {
 
 	bool			buffered_io
 		__guarded_by(&subsys->lock);
-	bool			enabled;
+	bool			enabled
+		__guarded_by(&subsys->lock);
 #define NVMET_NS_IO_LIVE	0
 	unsigned long		flags;
 	struct nvmet_subsys	*subsys;
