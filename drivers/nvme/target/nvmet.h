@@ -176,7 +176,8 @@ struct nvmet_ns {
 #define NVMET_NS_IO_LIVE	0
 	unsigned long		flags;
 	struct nvmet_subsys	*subsys;
-	const char		*device_path;
+	const char		*device_path
+		__guarded_by(&subsys->lock);
 
 	struct config_group	device_group;
 	struct config_group	group;
@@ -217,6 +218,7 @@ NVMET_NS_ACCESSOR(u32, blksize_shift)
 NVMET_NS_ACCESSOR(u8 *, nguid)
 NVMET_NS_ACCESSOR(uuid_t, uuid)
 NVMET_NS_ACCESSOR(bool, buffered_io)
+NVMET_NS_ACCESSOR(const char *, device_path)
 
 /*
  * These accessors use data_race() and READ_ONCE() to allow lockless access to
