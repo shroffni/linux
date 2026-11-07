@@ -198,7 +198,8 @@ struct nvmet_ns {
 	struct nvmet_pr		pr;
 	struct xarray		pr_per_ctrl_refs;
 #ifdef CONFIG_NVME_TARGET_DEBUGFS
-	struct dentry		*debugfs_dir;
+	struct dentry		*debugfs_dir
+		__guarded_by(&subsys->lock);
 #endif
 };
 
