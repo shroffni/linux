@@ -781,7 +781,6 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 	nvmet_ana_group_enabled[ns->anagrpid]++;
 	up_write(&nvmet_ana_sem);
 
-	ns->buffered_io = false;
 	ns->csi = NVME_CSI_NVM;
 
 	return ns;
