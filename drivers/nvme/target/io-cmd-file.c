@@ -239,7 +239,7 @@ static void nvmet_file_execute_rw(struct nvmet_req *req)
 	} else
 		req->f.mpool_alloc = false;
 
-	if (req->ns->buffered_io) {
+	if (nvmet_ns_buffered_io(req->ns)) {
 		if (likely(!req->f.mpool_alloc) &&
 		    (nvmet_ns_file(req->ns)->f_mode & FMODE_NOWAIT) &&
 		    nvmet_file_execute_io(req, IOCB_NOWAIT))
