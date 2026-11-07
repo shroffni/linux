@@ -899,7 +899,7 @@ static struct config_group *nvmet_ns_make(struct config_group *group,
 	}
 
 	ret = -ENOMEM;
-	ns = nvmet_ns_alloc(subsys, nsid);
+	ns = nvmet_ns_alloc_and_init(subsys, nsid);
 	if (!ns)
 		goto out;
 	config_group_init_type_name(&ns->group, name, &nvmet_ns_type);

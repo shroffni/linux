@@ -723,7 +723,36 @@ void nvmet_ns_free(struct nvmet_ns *ns)
 	kfree(ns);
 }
 
-struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
+static int nvmet_ns_init(struct nvmet_subsys *subsys, struct nvmet_ns *ns,
+		u32 nsid)
+	__must_hold(&subsys->lock)
+{
+	int ret;
+
+	ns->subsys = subsys;
+
+	lockdep_assert_held(&ns->subsys->lock);
+
+	init_completion(&ns->disable_done);
+	ns->nsid = nsid;
+
+	ret = xa_insert(&subsys->namespaces, ns->nsid, ns, GFP_KERNEL);
+	if (ret)
+		return ret;
+
+	if (ns->nsid > subsys->max_nsid)
+		subsys->max_nsid = nsid;
+
+	subsys->nr_namespaces++;
+
+	uuid_gen(&ns->uuid);
+	ns->buffered_io = false;
+	ns->csi = NVME_CSI_NVM;
+
+	return ret;
+}
+
+struct nvmet_ns *nvmet_ns_alloc_and_init(struct nvmet_subsys *subsys, u32 nsid)
 {
 	struct nvmet_ns *ns;
 
@@ -736,18 +765,8 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 	if (!ns)
 		goto out_unlock;
 
-	init_completion(&ns->disable_done);
-
-	ns->nsid = nsid;
-	ns->subsys = subsys;
-
-	if (ns->nsid > subsys->max_nsid)
-		subsys->max_nsid = nsid;
-
-	if (xa_insert(&subsys->namespaces, ns->nsid, ns, GFP_KERNEL))
+	if (nvmet_ns_init(subsys, ns, nsid))
 		goto out_exit;
-
-	subsys->nr_namespaces++;
 
 	mutex_unlock(&subsys->lock);
 
@@ -756,13 +775,8 @@ struct nvmet_ns *nvmet_ns_alloc(struct nvmet_subsys *subsys, u32 nsid)
 	nvmet_ana_group_enabled[ns->anagrpid]++;
 	up_write(&nvmet_ana_sem);
 
-	uuid_gen(&ns->uuid);
-	ns->buffered_io = false;
-	ns->csi = NVME_CSI_NVM;
-
 	return ns;
 out_exit:
-	subsys->max_nsid = nvmet_max_nsid(subsys);
 	kfree(ns);
 out_unlock:
 	mutex_unlock(&subsys->lock);
