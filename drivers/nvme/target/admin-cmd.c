@@ -1082,15 +1082,17 @@ static void nvmet_execute_identify_desclist(struct nvmet_req *req)
 {
 	off_t off = 0;
 	u16 status;
+	uuid_t uuid;
 
 	status = nvmet_req_find_ns(req);
 	if (status)
 		goto out;
 
-	if (memchr_inv(&req->ns->uuid, 0, sizeof(req->ns->uuid))) {
+	uuid = nvmet_ns_uuid(req->ns);
+	if (memchr_inv(&uuid, 0, sizeof(uuid))) {
 		status = nvmet_copy_ns_identifier(req, NVME_NIDT_UUID,
 						  NVME_NIDT_UUID_LEN,
-						  &req->ns->uuid, &off);
+						  &uuid, &off);
 		if (status)
 			goto out;
 	}
