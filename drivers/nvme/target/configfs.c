@@ -615,7 +615,14 @@ CONFIGFS_ATTR(nvmet_ns_, p2pmem);
 
 static ssize_t nvmet_ns_device_uuid_show(struct config_item *item, char *page)
 {
-	return sprintf(page, "%pUb\n", &to_nvmet_ns(item)->uuid);
+	struct nvmet_ns *ns = to_nvmet_ns(item);
+	ssize_t size;
+
+	mutex_lock(&ns->subsys->lock);
+	size = sprintf(page, "%pUb\n", &ns->uuid);
+	mutex_unlock(&ns->subsys->lock);
+
+	return size;
 }
 
 static ssize_t nvmet_ns_device_uuid_store(struct config_item *item,
