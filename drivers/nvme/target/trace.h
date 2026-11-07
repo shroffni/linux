@@ -59,7 +59,7 @@ static inline void __assign_req_name(char *name, struct nvmet_req *req)
 		return;
 	}
 
-	strscpy_pad(name, req->ns->device_path, DISK_NAME_LEN);
+	strscpy_pad(name, nvmet_ns_device_path(req->ns), DISK_NAME_LEN);
 }
 #endif
 
