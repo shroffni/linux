@@ -582,8 +582,13 @@ CONFIGFS_ATTR(nvmet_ns_, device_path);
 static ssize_t nvmet_ns_p2pmem_show(struct config_item *item, char *page)
 {
 	struct nvmet_ns *ns = to_nvmet_ns(item);
+	ssize_t ret;
 
-	return pci_p2pdma_enable_show(page, ns->p2p_dev, ns->use_p2pmem);
+	mutex_lock(&ns->subsys->lock);
+	ret = pci_p2pdma_enable_show(page, ns->p2p_dev, ns->use_p2pmem);
+	mutex_unlock(&ns->subsys->lock);
+
+	return ret;
 }
 
 static ssize_t nvmet_ns_p2pmem_store(struct config_item *item,
