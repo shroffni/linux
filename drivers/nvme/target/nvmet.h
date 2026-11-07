@@ -168,7 +168,8 @@ struct nvmet_ns {
 		__guarded_by(&subsys->lock);
 	u32			anagrpid;
 
-	bool			buffered_io;
+	bool			buffered_io
+		__guarded_by(&subsys->lock);
 	bool			enabled;
 #define NVMET_NS_IO_LIVE	0
 	unsigned long		flags;
@@ -212,6 +213,7 @@ NVMET_NS_ACCESSOR(struct file *, file)
 NVMET_NS_ACCESSOR(u32, blksize_shift)
 NVMET_NS_ACCESSOR(u8 *, nguid)
 NVMET_NS_ACCESSOR(uuid_t, uuid)
+NVMET_NS_ACCESSOR(bool, buffered_io)
 
 /*
  * These accessors use data_race() and READ_ONCE() marker to allow lockless
