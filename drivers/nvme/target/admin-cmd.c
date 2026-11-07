@@ -934,7 +934,7 @@ static void nvmet_execute_identify_ns(struct nvmet_req *req)
 	 */
 	id->endgid = cpu_to_le16(nvmet_ns_nsid(req->ns));
 
-	memcpy(&id->nguid, &req->ns->nguid, sizeof(id->nguid));
+	memcpy(&id->nguid, nvmet_ns_nguid(req->ns), sizeof(id->nguid));
 
 	id->lbaf[0].ds = nvmet_ns_blksize_shift(req->ns);
 
@@ -1094,10 +1094,11 @@ static void nvmet_execute_identify_desclist(struct nvmet_req *req)
 		if (status)
 			goto out;
 	}
-	if (memchr_inv(req->ns->nguid, 0, sizeof(req->ns->nguid))) {
+	if (memchr_inv(nvmet_ns_nguid(req->ns), 0, sizeof(req->ns->nguid))) {
 		status = nvmet_copy_ns_identifier(req, NVME_NIDT_NGUID,
 						  NVME_NIDT_NGUID_LEN,
-						  &req->ns->nguid, &off);
+						  nvmet_ns_nguid(req->ns),
+						  &off);
 		if (status)
 			goto out;
 	}
