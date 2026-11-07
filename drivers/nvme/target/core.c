@@ -730,13 +730,13 @@ void nvmet_ns_free(struct nvmet_ns *ns)
 		subsys->max_nsid = nvmet_max_nsid(subsys);
 
 	subsys->nr_namespaces--;
+	kfree(ns->device_path);
 	mutex_unlock(&subsys->lock);
 
 	down_write(&nvmet_ana_sem);
 	nvmet_ana_group_enabled[ns->anagrpid]--;
 	up_write(&nvmet_ana_sem);
 
-	kfree(ns->device_path);
 	kfree(ns);
 }
 
