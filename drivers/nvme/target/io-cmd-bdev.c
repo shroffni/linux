@@ -167,6 +167,10 @@ u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts)
 		status = NVME_SC_ACCESS_DENIED;
 		req->error_loc = offsetof(struct nvme_rw_command, nsid);
 		break;
+	case BLK_STS_TRANSPORT:
+		status = NVME_SC_INTERNAL_PATH_ERROR;
+		req->error_loc = offsetof(struct nvme_rw_command, nsid);
+		break;
 	case BLK_STS_IOERR:
 	default:
 		status = NVME_SC_INTERNAL | NVME_STATUS_DNR;
