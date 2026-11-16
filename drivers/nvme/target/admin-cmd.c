@@ -1015,15 +1015,26 @@ static void nvmet_execute_identify_nslist(struct nvmet_req *req, bool match_css)
 		goto out;
 	}
 
+	mutex_lock(&ctrl->subsys->lock);
 	nvmet_for_each_enabled_ns(&ctrl->subsys->namespaces, idx, ns) {
-		if (ns->nsid <= min_nsid)
-			continue;
-		if (match_css && ns->csi != req->cmd->identify.csi)
-			continue;
-		list[i++] = cpu_to_le32(ns->nsid);
+		/*
+		 * Both ctrl->subsys->lock and ns->subsys->lock refer to the
+		 * same lock. However, there's no way to annotate such locking
+		 * semantics using clang context annotation. So explicitly
+		 * assert the capability.
+		 */
+		__assume_ctx_lock(&ns->subsys->lock);
+
+		if (ns->nsid > min_nsid &&
+		    (!match_css || ns->csi == req->cmd->identify.csi))
+			list[i++] = cpu_to_le32(ns->nsid);
+
+		__release_ctx_lock(&ns->subsys->lock);
+
 		if (i == buf_size / sizeof(__le32))
 			break;
 	}
+	mutex_unlock(&ctrl->subsys->lock);
 
 	status = nvmet_copy_to_sgl(req, 0, list, buf_size);
 
